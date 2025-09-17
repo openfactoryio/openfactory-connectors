@@ -1,0 +1,49 @@
+devices:
+
+  opcua_sensor1:
+    uuid: OPCUA-SENSOR-001
+
+    uns:
+      inc: OpenFactory
+
+    connector:
+      type: opcua
+
+      server:
+        uri: opc.tcp://192.168.0.100:4840/freeopcuas/server/
+        namespace_uri: http://examples.openfactory.local/opcua
+
+      device:
+        path: Sensors/TemperatureSensor1
+
+        variables:
+          temp: Temperature
+          hum: Humidity
+          sensor_model: SensorModel
+
+        methods:
+          calibrate: Calibrate
+
+  opcua_sensor2:
+    uuid: OPCUA-SENSOR-002
+
+    uns:
+      inc: OpenFactory
+
+    connector:
+      type: opcua
+
+      server:
+        uri: opc.tcp://192.168.0.100:4840/freeopcuas/server/
+        namespace_uri: http://examples.openfactory.local/opcua
+
+      device:
+        path: Sensors/TemperatureSensor2
+
+        variables:
+          temp: Temperature
+          hum: Humidity
+          sensor_model: SensorModel
+
+        methods:
+          calibrate: Calibrate
