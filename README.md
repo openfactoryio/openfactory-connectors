@@ -9,11 +9,11 @@ Each connector is responsible for collecting data from a specific protocol or ec
   - `OPCUA-Coordinator`: assigns devices to gateways.  
   - `OPCUA-Gateway`: connects to one or more OPC UA servers, collects data, and streams to Kafka.
 
-- Planned
-    - **SHDR**
-    - **MQTT**  
-    - **Modbus**  
-    - **...**
+- **Planned**
+    - SHDR
+    - MQT
+    - Modbus
+    - ...
 
 ## 📂 Repository Structure
 
