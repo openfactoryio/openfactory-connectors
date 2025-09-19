@@ -1,6 +1,8 @@
 # python -m opcua.gateway.src.gateway
 
 """
+***OBSOLETE*** 
+
 OPC UA Gateway (multi-device) prototype.
 
 - POST /add_device  -> Device (openfactory.schemas.devices.Device) is registered and a monitor task starts.
