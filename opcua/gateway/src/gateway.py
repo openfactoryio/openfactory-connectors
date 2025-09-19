@@ -18,19 +18,66 @@ import os
 import asyncio
 import logging
 import traceback
+import json
 from numbers import Number
 from typing import Dict, Any
 from pydantic import BaseModel
-
+from confluent_kafka import Producer
 from fastapi import FastAPI, HTTPException
 from asyncua import Client, ua
 from asyncua.common.node import Node
 
 from openfactory.schemas.devices import Device
 from openfactory.schemas.connectors.opcua import OPCUAConnectorSchema
-from openfactory.assets import Asset, AssetAttribute
+from openfactory.assets import AssetAttribute
 from openfactory.assets.utils import openfactory_timestamp, current_timestamp
 from openfactory.kafka import KSQLDBClient
+
+
+# ----------------------------
+# Global producer singleton
+# ----------------------------
+class GlobalAssetProducer(Producer):
+    """
+    Single Kafka producer shared by all OPC UA devices.
+
+    This producer sends asset attributes from all devices to the ASSETS_STREAM topic.
+    """
+
+    _instance = None
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self, ksqlClient: KSQLDBClient, bootstrap_servers: str = None):
+        if hasattr(self, "_initialized"):
+            return  # avoid re-initializing singleton
+        bootstrap_servers = bootstrap_servers or os.getenv("KAFKA_BROKER")
+        super().__init__({'bootstrap.servers': bootstrap_servers})
+        self.ksql = ksqlClient
+        self.topic = self.ksql.get_kafka_topic("ASSETS_STREAM")
+        self._initialized = True
+
+    def send(self, asset_uuid: str, asset_attribute: AssetAttribute) -> None:
+        """
+        Send a Kafka message for the given asset and attribute.
+
+        Args:
+            asset_uuid (str): UUID of the asset.
+            asset_attribute (AssetAttribute): Attribute data to send.
+        """
+        msg = {
+            "ID": asset_attribute.id,
+            "VALUE": asset_attribute.value,
+            "TAG": asset_attribute.tag,
+            "TYPE": asset_attribute.type,
+            "attributes": {"timestamp": asset_attribute.timestamp}
+        }
+        self.produce(topic=self.topic, key=asset_uuid, value=json.dumps(msg))
+        # optionally flush here, or batch periodically
+
 
 # ----------------------------
 # Logging
@@ -51,8 +98,10 @@ app = FastAPI(title="OPCUA Gateway", version="0.1")
 
 # Active monitor tasks and assets
 _active_tasks: Dict[str, asyncio.Task] = {}
-_active_assets: Dict[str, Asset] = {}
 _active_device_defs: Dict[str, Device] = {}
+
+# Global producer instance
+global_producer = GlobalAssetProducer(KSQLDBClient(os.getenv("KSQLDB_URL")))
 
 
 # ----------------------------
@@ -123,18 +172,18 @@ class SubscriptionHandler:
     Returns:
         None
     """
-    def __init__(self, opcua_device: Asset, logger: logging.Logger):
+    def __init__(self, opcua_device_uuid: str, logger: logging.Logger):
         """
         Initialize the SubscriptionHandler.
 
         Args:
-            opcua_device (Asset): The OpenFactory device object where attributes will be forwarded.
+            opcua_device_uuid (str): UUID of the device.
             logger (logging.Logger): Logger instance for debug and error messages.
 
         Attributes:
             node_map (Dict[Node, Dict[str, str]]): Cache mapping OPC UA Node objects to metadata.
         """
-        self.opcua_device = opcua_device
+        self.opcua_device_uuid = opcua_device_uuid
         self.logger = logger
 
         # Cache mapping: Node -> {"local_name": str, "browse_name": str}
@@ -183,9 +232,10 @@ class SubscriptionHandler:
         self.logger.debug(f"DataChange: {local_name}:({browse_name}) -> {val}")
         print(f"DataChange: {local_name}:({browse_name}) -> {val}")
 
-        self.opcua_device.add_attribute(
-            attribute_id=local_name,
+        global_producer.send(
+            asset_uuid=self.opcua_device_uuid,
             asset_attribute=AssetAttribute(
+                id=local_name,
                 value=val,
                 type=ofa_type,
                 tag=browse_name,
@@ -222,7 +272,7 @@ class SubscriptionHandler:
             if severity:
                 message_text = f"{message_text} (Severity: {severity})"
 
-            # Determine Condtion tag based on active state
+            # Determine Condition tag based on active state
             tag = "Fault"
             if active and hasattr(active, "EffectiveDisplayName"):
                 if active.EffectiveDisplayName != "Active":
@@ -234,14 +284,15 @@ class SubscriptionHandler:
             self.logger.error(f"Error parsing event: {e}, raw event={event}")
             message_text = "UNAVAILABLE"
 
-        self.opcua_device.add_attribute(
-            attribute_id="alarm",
+        global_producer.send(
+            asset_uuid=self.opcua_device_uuid,
             asset_attribute=AssetAttribute(
+                id="alarm",
                 value=message_text,
                 type="Condition",
                 tag=tag,
                 timestamp=opcua_event_timestamp(event),
-            ),
+            )
         )
 
 
@@ -267,15 +318,9 @@ class DeviceMonitor:
         self.device = device
         self.dev_uuid = device.uuid
         self.schema = OPCUAConnectorSchema(**device.connector.model_dump())
-        self.asset = Asset(
-            asset_uuid=self.dev_uuid,
-            ksqlClient=KSQLDBClient(os.getenv("KSQLDB_URL")),
-            bootstrap_servers=os.getenv("KAFKA_BROKER"),
-        )
         self.sub = None
 
         # Register device globally
-        _active_assets[self.dev_uuid] = self.asset
         _active_device_defs[self.dev_uuid] = self.device
 
         # logging
@@ -299,7 +344,10 @@ class DeviceMonitor:
                 self.log.error(f"[{self.dev_uuid}] OPC UA client error: {type(e).__name__}: {e}")
                 self.log.debug(traceback.format_exc())
                 try:
-                    self.asset.add_attribute("avail", AssetAttribute(value="UNAVAILABLE", tag="Availability", type="Events"))
+                    global_producer.send(
+                        asset_uuid=self.dev_uuid,
+                        asset_attribute=AssetAttribute(id='avail', value="UNAVAILABLE", tag="Availability", type="Events")
+                    )
                 except Exception:
                     pass
                 await asyncio.sleep(2)  # backoff before reconnect
@@ -315,7 +363,7 @@ class DeviceMonitor:
             idx = await self._resolve_namespace(client)
             device_node = await self._resolve_device_node(client, idx)
 
-            handler = SubscriptionHandler(self.asset, self.log)
+            handler = SubscriptionHandler(self.dev_uuid, self.log)
             self.sub = await client.create_subscription(
                 period=float(self.schema.server.subscription.publishing_interval),
                 handler=handler,
@@ -324,7 +372,10 @@ class DeviceMonitor:
             await self._subscribe_variables(device_node, idx, handler)
             await self._subscribe_events(device_node)
 
-            self.asset.add_attribute("avail", AssetAttribute(value="AVAILABLE", tag="Availability", type="Events"))
+            global_producer.send(
+                asset_uuid=self.dev_uuid,
+                asset_attribute=AssetAttribute(id='avail', value="AVAILABLE", tag="Availability", type="Events")
+            )
             self.log.info(f"[{self.dev_uuid}] Connected to OPC UA server at {self.schema.server.uri}")
 
             await self._keepalive_loop(device_node)
@@ -434,7 +485,10 @@ class DeviceMonitor:
         """
         self.log.info(f"[{self.dev_uuid}] Monitor task cancelled; cleaning up")
         try:
-            self.asset.add_attribute("avail", AssetAttribute(value="UNAVAILABLE", tag="Availability", type="Events"))
+            global_producer.send(
+                asset_uuid=self.dev_uuid,
+                asset_attribute=AssetAttribute(id='avail', value="UNAVAILABLE", tag="Availability", type="Events")
+            )
         except Exception:
             pass
         try:
@@ -442,7 +496,6 @@ class DeviceMonitor:
                 await self.sub.delete()
         except Exception:
             pass
-        _active_assets.pop(self.dev_uuid, None)
         _active_device_defs.pop(self.dev_uuid, None)
 
 
@@ -487,9 +540,6 @@ async def add_device(req: AddDeviceRequest):
     if device.uuid in _active_tasks:
         raise HTTPException(status_code=400, detail=f"Device {device.uuid} already added")
 
-    # store device definition
-    _active_device_defs[device.uuid] = device
-
     # create monitor task
     task = asyncio.create_task(monitor_device(device))
     _active_tasks[device.uuid] = task
@@ -511,7 +561,6 @@ async def remove_device(device_uuid: str):
     """
     task = _active_tasks.pop(device_uuid, None)
     _active_device_defs.pop(device_uuid, None)
-    _active_assets.pop(device_uuid, None)
 
     if not task:
         raise HTTPException(status_code=404, detail="Device not found")
