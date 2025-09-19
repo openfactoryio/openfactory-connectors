@@ -25,5 +25,9 @@ app = FastAPI(title="OPCUA Gateway", version="0.1")
 app.logger = setup_logging(level=LOG_LEVEL)
 app.include_router(api_router)
 
+
+# ----------------------------
+# Entry point for local dev
+# ----------------------------
 if __name__ == "__main__":
     uvicorn.run("opcua.gateway.src.main:app", host="0.0.0.0", port=OPCUA_GATEWAY_PORT, reload=True)
