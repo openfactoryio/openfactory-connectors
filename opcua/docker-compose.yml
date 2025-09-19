@@ -1,0 +1,16 @@
+services:
+  opcua-gateway:
+    build:
+      context: ./gateway/src
+      dockerfile: Dockerfile
+      args:
+        OPENFACTORY_VERSION: "main"
+    image: openfactoryio/opcua_gateway:latest
+    container_name: opcua_gateway
+    environment:
+      - KAFKA_BROKER=${KAFKA_BROKER}
+      - KSQLDB_URL=${KSQLDB_URL}
+      - OPCUA_GATEWAY_LOG_LEVEL=${OPCUA_GATEWAY_LOG_LEVEL:-INFO}
+    ports:
+      - "8001:8001"
+    restart: unless-stopped
