@@ -6,11 +6,42 @@ services:
       args:
         OPENFACTORY_VERSION: "main"
     image: openfactoryio/opcua_gateway:latest
-    container_name: opcua_gateway
+    container_name: opcua-gateway
+    depends_on:
+      opcua-coordinator:
+        condition: service_healthy
     environment:
+      - GATEWAY_HOST=opcua-gateway
+      - COORDINATOR_URL=${COORDINATOR_URL:-http://opcua-coordinator:8000}
       - KAFKA_BROKER=${KAFKA_BROKER}
       - KSQLDB_URL=${KSQLDB_URL}
       - OPCUA_GATEWAY_LOG_LEVEL=${OPCUA_GATEWAY_LOG_LEVEL:-INFO}
     ports:
       - "8001:8001"
     restart: unless-stopped
+    networks:
+      - factory-net
+
+  opcua-coordinator:
+    build:
+      context: ./coordinator/src
+      dockerfile: Dockerfile
+      args:
+        OPENFACTORY_VERSION: "main"
+    image: openfactoryio/opcua_coordinator:latest
+    container_name: opcua-coordinator
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    networks:
+      - factory-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/assignments"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+
+    factory-net:
+      external: true
