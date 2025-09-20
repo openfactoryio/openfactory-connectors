@@ -18,35 +18,33 @@ It contains two services:
 
 Multiple gateways can be deployed for scalability.
 
-
 ## ⚙️ Configuration
+
+### Environment Variables (Coordinator)
+No environment variables are required
 
 ### Environment Variables (Gateway)
 
-| Variable         | Description                               | Default |
-|------------------|-------------------------------------------|---------|
-| `KAFKA_BROKER`   | Kafka bootstrap server address            | `localhost:9092` |
-| `KAFKA_TOPIC`    | Kafka topic to stream data into           | `opcua_data` |
-| `DEVICES`        | Comma-separated list of OPC UA endpoints  | - |
-
-*(Coordinator config TBD)*
-
----
+| Variable                  | Description                               | Default     |
+|---------------------------|-------------------------------------------|-------------|
+| `KAFKA_BROKER`            | Kafka bootstrap server address            | Must be set |
+| `KSQLDB_URL`              | ksqlDB URL                                | Must be set |
+| `OPCUA_GATEWAY_LOG_LEVEL` | Log level                                 | INFO        |
 
 ## 🚀 Deployment
 
-Typical deployment flow:
+### Local Docker
+After setting the required environment variables, deploy the services with:
 
+```bash
+docker compose up -d
 ```
 
-OPCUA-Coordinator -> \[assigns devices] -> OPCUA-Gateway -> Kafka
-
+### Dcker Swarm
+After setting the required environment variables, deploy the services with:
+```bash
+docker stack deploy -c docker-compose.yml opcua
 ```
-
-You can run the services in Docker Swarm or Kubernetes.  
-Each Gateway manages a subset of devices for load balancing.
-
----
 
 ## 📂 Directory Structure
 
