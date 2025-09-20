@@ -219,14 +219,16 @@ class DeviceMonitor:
                 asset_uuid=self.dev_uuid,
                 asset_attribute=AssetAttribute(id='avail', value="UNAVAILABLE", tag="Availability", type="Events")
             )
-        except Exception:
-            pass
+            self.log.info(f"[{self.dev_uuid}] Sent UNAVAILABLE status to OpenFactory")
+        except Exception as e:
+            self.log.error(f"[{self.dev_uuid}] Unable to send UNAVAILABLE status to OpenFactory: {e}")
         try:
             if self.sub:
                 await self.sub.delete()
         except Exception:
             pass
         _active_device_defs.pop(self.dev_uuid, None)
+        self.log.info(f"[{self.dev_uuid}] OPC UA connector removed succesfully")
 
 
 async def monitor_device(device: Device, logger):

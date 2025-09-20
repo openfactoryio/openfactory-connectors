@@ -99,7 +99,6 @@ class SubscriptionHandler:
             val = "UNAVAILABLE"
 
         self.logger.debug(f"DataChange: {local_name}:({browse_name}) -> {val}")
-        print(f"DataChange: {local_name}:({browse_name}) -> {val}")
 
         global_producer.send(
             asset_uuid=self.opcua_device_uuid,
