@@ -23,7 +23,7 @@ ARG APPLICATION_MANUFACTURER=OpenFactory
 ARG OPENFACTORY_VERSION=main
 
 # Install git and create a non-root user and group
-RUN apt-get update && apt-get install -y git \
+RUN apt-get update && apt-get install -y git curl \
     && groupadd --gid $GID $UNAME \
     && useradd --create-home --uid $UID --gid $GID $UNAME \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -43,6 +43,8 @@ RUN pip install --no-cache-dir \
 
 # Copy application code
 COPY . src
+COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
 
 # Change ownership to the non-root user
 RUN chown -R $UNAME:$UNAME /app
@@ -59,4 +61,5 @@ USER $UNAME
 EXPOSE 8001
 
 # Command to run the app with uvicorn
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
+# CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
+CMD ["./entrypoint.sh"]
