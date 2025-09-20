@@ -124,6 +124,44 @@ async def register_device(req: RegisterDeviceRequest):
     return {"device_uuid": device_uuid, "assigned_gateway": assigned_gateway}
 
 
+@app.delete("/unregister_device/{device_uuid}")
+async def unregister_device(device_uuid: str):
+    """
+    Unregister a device and notify its assigned gateway to remove it.
+
+    Args:
+        device_uuid (str): UUID of the device to unregister.
+
+    Raises:
+        HTTPException: If the device is not registered or gateway call fails.
+
+    Returns:
+        dict: Status of the unregistration with keys:
+            - "status": Unregistration status ("unregistered")
+            - "device_uuid": UUID of the unregistered device
+            - "gateway": Host URL of the gateway that was notified
+    """
+    if device_uuid not in device_assignments:
+        raise HTTPException(status_code=404, detail=f"Device {device_uuid} not found")
+
+    assigned_gateway = device_assignments[device_uuid]
+
+    # Notify gateway
+    url = f"{assigned_gateway}/remove_device/{device_uuid}"
+    try:
+        resp = requests.delete(url)
+        resp.raise_for_status()
+    except Exception as e:
+        logger.error(f"❌ Failed to remove {device_uuid} from {assigned_gateway}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to contact gateway")
+
+    # Remove from registry
+    del device_assignments[device_uuid]
+    logger.info(f"Device {device_uuid} unregistered from {assigned_gateway}")
+
+    return {"status": "unregistered", "device_uuid": device_uuid, "gateway": assigned_gateway}
+
+
 @app.get("/assignments")
 async def get_assignments():
     """
