@@ -21,6 +21,19 @@ logger = logging.getLogger("opcua-coordinator")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager for the FastAPI application.
+
+    This function runs at application startup and shutdown. In local development,
+    it automatically registers a default gateway ("http://localhost:8001") if
+    the `COORDINATOR_LOCAL_DEV` environment variable is set to "1".
+
+    Args:
+        app (FastAPI): The FastAPI application instance.
+
+    Yields:
+        None
+    """
     # This runs at app startup
     import os
     if os.getenv("COORDINATOR_LOCAL_DEV") == "1":
@@ -51,11 +64,13 @@ async def register_gateway(req: RegisterGatewayRequest):
     """
     Register a new OPC UA Gateway dynamically.
 
-    Request Body:
-        req (RegisterGatewayRequest): The gateway registration payload containing `gateway_host`.
+    Args:
+        req (RegisterGatewayRequest): The gateway registration payload containing the `gateway_host` URL.
 
     Returns:
-        dict: A confirmation with the registered gateway host.
+        dict: A confirmation dictionary with keys:
+            - "status": Registration status ("registered")
+            - "gateway_host": The registered gateway host URL
     """
     gateway_host = req.gateway_host
     if gateway_host not in gateways:
@@ -66,6 +81,23 @@ async def register_gateway(req: RegisterGatewayRequest):
 
 @app.post("/register_device")
 async def register_device(req: RegisterDeviceRequest):
+    """
+    Register a new OPC UA device and assign it to a gateway.
+
+    Performs a round-robin assignment of devices to available gateways. Notifies
+    the assigned gateway via an HTTP POST request to add the device.
+
+    Args:
+        req (RegisterDeviceRequest): Payload containing the device information.
+
+    Raises:
+        HTTPException: If no gateways are registered or the device is already registered.
+
+    Returns:
+        dict: Assignment details with keys:
+            - "device_uuid": UUID of the registered device
+            - "assigned_gateway": Host URL of the assigned gateway
+    """
     if not gateways:
         raise HTTPException(status_code=500, detail="No gateways registered")
 
@@ -94,13 +126,23 @@ async def register_device(req: RegisterDeviceRequest):
 
 @app.get("/assignments")
 async def get_assignments():
-    """ Return all device -> gateway assignments. """
+    """
+    Retrieve all device-to-gateway assignments.
+
+    Returns:
+        Dict[str, str]: A dictionary mapping device UUIDs to assigned gateway hosts.
+    """
     return device_assignments
 
 
 @app.get("/gateways")
 async def get_gateways():
-    """ Return all gateway assignments. """
+    """
+    Retrieve the list of all registered gateways.
+
+    Returns:
+        List[str]: A list of gateway host URLs currently registered with the coordinator.
+    """
     return gateways
 
 
