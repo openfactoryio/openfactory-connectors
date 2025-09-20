@@ -5,11 +5,7 @@ services:
       dockerfile: Dockerfile
       args:
         OPENFACTORY_VERSION: "main"
-    image: openfactoryio/opcua_gateway:latest
-    container_name: opcua-gateway
-    depends_on:
-      opcua-coordinator:
-        condition: service_healthy
+    image: openfactoryio/opcua_gateway
     environment:
       - GATEWAY_HOST=opcua-gateway
       - COORDINATOR_URL=${COORDINATOR_URL:-http://opcua-coordinator:8000}
@@ -28,18 +24,12 @@ services:
       dockerfile: Dockerfile
       args:
         OPENFACTORY_VERSION: "main"
-    image: openfactoryio/opcua_coordinator:latest
-    container_name: opcua-coordinator
+    image: openfactoryio/opcua_coordinator
     ports:
       - "8000:8000"
     restart: unless-stopped
     networks:
       - factory-net
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/assignments"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
 networks:
 
