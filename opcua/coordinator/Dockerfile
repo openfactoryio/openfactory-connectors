@@ -1,5 +1,5 @@
 # ------------------------------------------------------------------------------
-# 🐳 Dockerfile for OPCUA Gateway (FastAPI)
+# 🐳 Dockerfile for OPCUA Coordinator (FastAPI)
 #
 # This image is used in both development and production environments.
 # It installs required system dependencies, sets up a non-root user,
@@ -14,7 +14,7 @@
 FROM python:3.12-slim
 
 # Arguments for non-root user creation
-ARG UNAME=opcua_gateway
+ARG UNAME=opcua_coordinator
 ARG UID=1200
 ARG GID=1200
 # Arguments for version management
@@ -42,9 +42,7 @@ RUN pip install --no-cache-dir \
       "git+https://github.com/openfactoryio/openfactory-core.git@${OPENFACTORY_VERSION}"
 
 # Copy application code
-COPY . src
-COPY entrypoint.sh .
-RUN chmod +x entrypoint.sh
+COPY src src
 
 # Change ownership to the non-root user
 RUN chown -R $UNAME:$UNAME /app
@@ -58,8 +56,7 @@ ENV OPENFACTORY_VERSION=${OPENFACTORY_VERSION}
 USER $UNAME
 
 # Expose the port your app runs on
-EXPOSE 8001
+EXPOSE 8000
 
 # Command to run the app with uvicorn
-# CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
-CMD ["./entrypoint.sh"]
+CMD ["uvicorn", "src.coordinator:app", "--host", "0.0.0.0", "--port", "8000"]

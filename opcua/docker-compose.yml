@@ -1,7 +1,7 @@
 services:
   opcua-gateway:
     build:
-      context: ./gateway/src
+      context: ./gateway
       dockerfile: Dockerfile
       args:
         OPENFACTORY_VERSION: "main"
@@ -20,7 +20,7 @@ services:
 
   opcua-coordinator:
     build:
-      context: ./coordinator/src
+      context: ./coordinator
       dockerfile: Dockerfile
       args:
         OPENFACTORY_VERSION: "main"
