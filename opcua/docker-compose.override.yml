@@ -1,0 +1,16 @@
+# ------------------------------------------------------------------------------
+# docker-compose.override.yml
+# ------------------------------------------------------------------------------
+# Local deployment overrides (non-Swarm)
+#
+# Purpose:
+#   - Ensures predictable container names in local development.
+#   - Container names match the service names used in a Swarm cluster.
+#   - Automatically applied when running locally; not required in Swarm deployments.
+# ------------------------------------------------------------------------------
+
+services:
+  opcua-gateway:
+    container_name: opcua-gateway
+  opcua-coordinator:
+    container_name: opcua-coordinator
