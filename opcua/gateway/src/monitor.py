@@ -18,6 +18,7 @@ a device monitor in an asyncio task.
 import asyncio
 import traceback
 import logging
+import os
 from asyncua import Client
 from openfactory.schemas.devices import Device
 from openfactory.schemas.connectors.opcua import OPCUAConnectorSchema
@@ -40,7 +41,7 @@ class DeviceMonitor:
 
     def __init__(self, device: Device, logger: logging.Logger):
         """
-        Initialize the monitor for a given device.
+        Initialize monitoring of a given device.
 
         Args:
             device (Device): The device definition, including UUID and connector schema.
@@ -53,8 +54,46 @@ class DeviceMonitor:
         # Register device globally
         _active_device_defs[self.dev_uuid] = self.device
 
-        # logging
+        # Logging
         self.log = logger
+
+        # Register Producer Attributes with OpenFactory
+        global_producer.send(
+            asset_uuid=f"{self.dev_uuid}-PRODUCER",
+            asset_attribute=AssetAttribute(
+                id='avail',
+                value="AVAILABLE",
+                tag="Availability",
+                type="Events"
+            )
+        )
+        global_producer.send(
+            asset_uuid=f"{self.dev_uuid}-PRODUCER",
+            asset_attribute=AssetAttribute(
+                id='application_manufacturer',
+                value='OpenFactoryIO',
+                type='Events',
+                tag='Application.Manufacturer'
+            )
+        )
+        global_producer.send(
+            asset_uuid=f"{self.dev_uuid}-PRODUCER",
+            asset_attribute=AssetAttribute(
+                id='application_license',
+                value='Polyform Noncommercial License 1.0.0',
+                type='Events',
+                tag='Application.License'
+            )
+        )
+        global_producer.send(
+            asset_uuid=f"{self.dev_uuid}-PRODUCER",
+            asset_attribute=AssetAttribute(
+                id='application_version',
+                value=os.environ.get('OPENFACTORY_VERSION'),
+                type='Events',
+                tag='Application.Version'
+            )
+        )
 
     async def run(self) -> None:
         """
