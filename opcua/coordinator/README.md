@@ -109,8 +109,8 @@ For local development, a default gateway (`http://localhost:8001`) can be automa
 
 ```json
 [
-  "http://gateway-host:8001",
-  "http://gateway-host:8002"
+  "http://gateway-1:8001",
+  "http://gateway-2:8001"
 ]
 ```
 
