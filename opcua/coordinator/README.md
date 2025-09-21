@@ -59,7 +59,7 @@ For local development, a default gateway (`http://localhost:8001`) can be automa
 
 ```json
 {
-  "device": { /* Device object as defined in openfactory.schemas.devices */ }
+  "device": { "<Device object as defined in openfactory.schemas.devices>" }
 }
 ```
 
