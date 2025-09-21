@@ -138,6 +138,8 @@ python -m opcua.coordinator.src.coordinator
 
 | Variable                | Description                                                                           | Required / Optional |
 | ----------------------- | ------------------------------------------------------------------------------------- | ------------------- |
+| `KAFKA_BROKER`          | Kafka bootstrap server address                                                        | Required            |
+| `KSQLDB_URL`            | ksqlDB URL                                                                            | Required            |
 | `COORDINATOR_LOCAL_DEV` | If set to `1`, adds a default local gateway (`http://localhost:8001`) for development | Optional            |
 
 ## Deployment

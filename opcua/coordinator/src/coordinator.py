@@ -1,11 +1,16 @@
 # COORDINATOR_LOCAL_DEV=1 python -m opcua.coordinator.src.coordinator
 
+import os
 import logging
 import requests
+import json
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Dict
+from confluent_kafka import Producer
+from openfactory.kafka import KSQLDBClient
+from openfactory.assets import AssetAttribute
 from openfactory.schemas.devices import Device
 
 
@@ -17,6 +22,34 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("opcua-coordinator")
+
+
+class KafkaProducer(Producer):
+
+    def __init__(self):
+        super().__init__({'bootstrap.servers': os.getenv("KAFKA_BROKER")})
+        self.ksql = KSQLDBClient(os.getenv("KSQLDB_URL"))
+        self.topic = self.ksql.get_kafka_topic("ASSETS_STREAM")
+
+    def send(self, asset_uuid: str, asset_attribute: AssetAttribute) -> None:
+        """
+        Send a Kafka message for the given asset and attribute.
+
+        Args:
+            asset_uuid (str): UUID of the asset.
+            asset_attribute (AssetAttribute): Attribute data to send.
+
+        Returns:
+            None
+        """
+        msg = {
+            "ID": asset_attribute.id,
+            "VALUE": asset_attribute.value,
+            "TAG": asset_attribute.tag,
+            "TYPE": asset_attribute.type,
+            "attributes": {"timestamp": asset_attribute.timestamp}
+        }
+        self.produce(topic=self.topic, key=asset_uuid, value=json.dumps(msg))
 
 
 @asynccontextmanager
@@ -43,6 +76,7 @@ async def lifespan(app: FastAPI):
     # App shutdown logic here if needed
 
 app = FastAPI(title="OPCUA Coordinator", version="0.1", lifespan=lifespan)
+app.kafka_producer = KafkaProducer()
 
 # In-memory store: device_uuid -> gateway_id
 device_assignments: Dict[str, str] = {}
@@ -120,6 +154,17 @@ async def register_device(req: RegisterDeviceRequest):
         logger.info("✅ Success:", resp.json())
     except Exception as e:
         logger.error("❌ Failed:", e)
+
+    # register gateway with Producer Asset
+    app.kafka_producer.send(
+        asset_uuid=f"{device_uuid}-PRODUCER",
+        asset_attribute=AssetAttribute(
+            id='opcua-gateway',
+            value=assigned_gateway,
+            type='Events',
+            tag='ProducerURI'
+        )
+    )
 
     return {"device_uuid": device_uuid, "assigned_gateway": assigned_gateway}
 

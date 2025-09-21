@@ -56,6 +56,9 @@ services:
       args:
         OPENFACTORY_VERSION: "main"
     image: openfactoryio/opcua_coordinator
+    environment:
+      - KAFKA_BROKER=${KAFKA_BROKER}
+      - KSQLDB_URL=${KSQLDB_URL}
     ports:
       - "8000:8000"
     restart: unless-stopped

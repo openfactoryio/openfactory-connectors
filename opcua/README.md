@@ -34,7 +34,10 @@ Together, they allow OpenFactory to handle **many devices across multiple factor
 
 ### Environment Variables (Coordinator)
 
-No environment variables are required.
+| Variable                  | Description                    | Default     |
+| ------------------------- | ------------------------------ | ----------- |
+| `KAFKA_BROKER`            | Kafka bootstrap server address | Must be set |
+| `KSQLDB_URL`              | ksqlDB URL                     | Must be set |
 
 ### Environment Variables (Gateway)
 
