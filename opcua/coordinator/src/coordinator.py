@@ -3,15 +3,14 @@
 import os
 import logging
 import requests
-import json
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Dict
-from confluent_kafka import Producer
 from openfactory.kafka import KSQLDBClient
-from openfactory.assets import AssetAttribute
+from openfactory.assets import Asset, AssetAttribute
 from openfactory.schemas.devices import Device
+from openfactory.utils import register_asset
 
 
 # ----------------------------
@@ -22,34 +21,6 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("opcua-coordinator")
-
-
-class KafkaProducer(Producer):
-
-    def __init__(self):
-        super().__init__({'bootstrap.servers': os.getenv("KAFKA_BROKER")})
-        self.ksql = KSQLDBClient(os.getenv("KSQLDB_URL"))
-        self.topic = self.ksql.get_kafka_topic("ASSETS_STREAM")
-
-    def send(self, asset_uuid: str, asset_attribute: AssetAttribute) -> None:
-        """
-        Send a Kafka message for the given asset and attribute.
-
-        Args:
-            asset_uuid (str): UUID of the asset.
-            asset_attribute (AssetAttribute): Attribute data to send.
-
-        Returns:
-            None
-        """
-        msg = {
-            "ID": asset_attribute.id,
-            "VALUE": asset_attribute.value,
-            "TAG": asset_attribute.tag,
-            "TYPE": asset_attribute.type,
-            "attributes": {"timestamp": asset_attribute.timestamp}
-        }
-        self.produce(topic=self.topic, key=asset_uuid, value=json.dumps(msg))
 
 
 @asynccontextmanager
@@ -76,7 +47,46 @@ async def lifespan(app: FastAPI):
     # App shutdown logic here if needed
 
 app = FastAPI(title="OPCUA Coordinator", version="0.1", lifespan=lifespan)
-app.kafka_producer = KafkaProducer()
+ksql = KSQLDBClient(os.getenv("KSQLDB_URL"))
+
+# Register OPC UA Coordinator Attributes
+register_asset(asset_uuid="OPCUA-COORDINATOR", uns=None, asset_type='OpenFactoryApp',
+               ksqlClient=ksql, bootstrap_servers=os.getenv("KAFKA_BROKER"))
+coordinator = Asset(asset_uuid="OPCUA-COORDINATOR",
+                    ksqlClient=ksql, bootstrap_servers=os.getenv("KAFKA_BROKER"))
+coordinator.add_attribute(
+    AssetAttribute(
+        id='avail',
+        value="AVAILABLE",
+        tag="Availability",
+        type="Events"
+    )
+)
+coordinator.add_attribute(
+    AssetAttribute(
+        id='application_manufacturer',
+        value='OpenFactoryIO',
+        type='Events',
+        tag='Application.Manufacturer'
+    )
+)
+coordinator.add_attribute(
+    AssetAttribute(
+        id='application_license',
+        value='Polyform Noncommercial License 1.0.0',
+        type='Events',
+        tag='Application.License'
+    )
+)
+coordinator.add_attribute(
+    AssetAttribute(
+        id='application_version',
+        value=os.environ.get('OPENFACTORY_VERSION'),
+        type='Events',
+        tag='Application.Version'
+    )
+)
+
 
 # In-memory store: device_uuid -> gateway_id
 device_assignments: Dict[str, str] = {}
@@ -109,6 +119,7 @@ async def register_gateway(req: RegisterGatewayRequest):
     gateway_host = req.gateway_host
     if gateway_host not in gateways:
         gateways.append(gateway_host)
+    coordinator.add_reference_below(gateway_host)
     logger.info(f"Registred new gateway {gateway_host}")
     return {"status": "registered", "gateway_host": gateway_host}
 
@@ -156,9 +167,10 @@ async def register_device(req: RegisterDeviceRequest):
         logger.error("❌ Failed:", e)
 
     # register gateway with Producer Asset
-    app.kafka_producer.send(
-        asset_uuid=f"{device_uuid}-PRODUCER",
-        asset_attribute=AssetAttribute(
+    producer = Asset(asset_uuid="OPCUA-COORDINATOR",
+                     ksqlClient=ksql, bootstrap_servers=os.getenv("KAFKA_BROKER"))
+    producer.add_attribute(
+        AssetAttribute(
             id='opcua-gateway',
             value=assigned_gateway,
             type='Events',
