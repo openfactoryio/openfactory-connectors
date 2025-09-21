@@ -42,7 +42,7 @@ It is responsible for:
 
 ```json
 {
-  "device": { /* Device object as defined in openfactory.schemas.devices */ }
+  "device": { "<Device object as defined in openfactory.schemas.devices>" }
 }
 ```
 
