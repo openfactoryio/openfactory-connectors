@@ -7,6 +7,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Dict
+from urllib.parse import urlparse
+
 from openfactory.kafka import KSQLDBClient
 from openfactory.assets import Asset, AssetAttribute
 from openfactory.schemas.devices import Device
@@ -119,7 +121,53 @@ async def register_gateway(req: RegisterGatewayRequest):
     gateway_host = req.gateway_host
     if gateway_host not in gateways:
         gateways.append(gateway_host)
-    coordinator.add_reference_below(gateway_host)
+    gateway_uuid = urlparse(gateway_host).hostname.upper()
+    coordinator.add_reference_below(gateway_uuid)
+    # Register OPC UA Gateway Attributes
+    register_asset(asset_uuid=gateway_uuid, uns=None, asset_type='OpenFactoryApp',
+                   ksqlClient=ksql, bootstrap_servers=os.getenv("KAFKA_BROKER"))
+    gateway = Asset(asset_uuid=gateway_uuid,
+                    ksqlClient=ksql, bootstrap_servers=os.getenv("KAFKA_BROKER"))
+    gateway.add_attribute(
+        AssetAttribute(
+            id='avail',
+            value="AVAILABLE",
+            tag="Availability",
+            type="Events"
+        )
+    )
+    gateway.add_attribute(
+        AssetAttribute(
+            id='uri',
+            value=gateway_host,
+            tag="GatewayURI",
+            type="Events"
+        )
+    )
+    gateway.add_attribute(
+        AssetAttribute(
+            id='application_manufacturer',
+            value='OpenFactoryIO',
+            type='Events',
+            tag='Application.Manufacturer'
+        )
+    )
+    gateway.add_attribute(
+        AssetAttribute(
+            id='application_license',
+            value='Polyform Noncommercial License 1.0.0',
+            type='Events',
+            tag='Application.License'
+        )
+    )
+    gateway.add_attribute(
+        AssetAttribute(
+            id='application_version',
+            value=os.environ.get('OPENFACTORY_VERSION'),
+            type='Events',
+            tag='Application.Version'
+        )
+    )
     logger.info(f"Registred new gateway {gateway_host}")
     return {"status": "registered", "gateway_host": gateway_host}
 
