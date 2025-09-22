@@ -89,7 +89,7 @@ class DeviceMonitor:
             asset_uuid=f"{self.dev_uuid}-PRODUCER",
             asset_attribute=AssetAttribute(
                 id='application_version',
-                value=os.environ.get('OPENFACTORY_VERSION'),
+                value=os.environ.get('APPLICATION_VERSION'),
                 type='Events',
                 tag='Application.Version'
             )
