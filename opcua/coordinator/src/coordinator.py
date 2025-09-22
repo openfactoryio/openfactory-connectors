@@ -83,7 +83,7 @@ coordinator.add_attribute(
 coordinator.add_attribute(
     AssetAttribute(
         id='application_version',
-        value=os.environ.get('OPENFACTORY_VERSION'),
+        value=os.environ.get('APPLICATION_VERSION'),
         type='Events',
         tag='Application.Version'
     )
