@@ -1,5 +1,5 @@
 # ------------------------------------------------------------------------------
-# docker-compose.override.yml
+# 🐳 docker-compose.override.yml
 # ------------------------------------------------------------------------------
 # Local deployment overrides (non-Swarm)
 #
@@ -11,6 +11,21 @@
 
 services:
   opcua-gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+      args:
+        OPENFACTORY_VERSION: "main"
+    image: openfactoryio/opcua-gateway
     container_name: opcua-gateway
+    restart: unless-stopped
+
   opcua-coordinator:
+    build:
+      context: ./coordinator
+      dockerfile: Dockerfile
+      args:
+        OPENFACTORY_VERSION: "main"
+    image: openfactoryio/opcua-coordinator
     container_name: opcua-coordinator
+    restart: unless-stopped

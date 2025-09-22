@@ -8,12 +8,21 @@
 #
 # Both services are connected through the 'factory-net' Docker network.
 #
-# Usage:
+# Usage (local):
 #   # Start services
 #   docker compose up -d
 #
 #   # Stop services
 #   docker compose down
+#
+# Usage (docker swarm):
+#   # Source environment variables for an .env file
+#   set -a && source .env && set +a
+#   # Deploy the stack
+#   docker stack deploy -c docker-compose.yml opcua-connector
+#
+#   # Remove stack
+#   docker stack rm opcua-connector
 #
 # Environment variables:
 #   COORDINATOR_URL          URL of the coordinator (default: http://opcua-coordinator:8000)
@@ -31,12 +40,7 @@
 
 services:
   opcua-gateway:
-    build:
-      context: ./gateway
-      dockerfile: Dockerfile
-      args:
-        OPENFACTORY_VERSION: "main"
-    image: openfactoryio/opcua_gateway
+    image: ghcr.io/openfactoryio/opcua-gateway
     environment:
       - GATEWAY_HOST=opcua-gateway
       - COORDINATOR_URL=${COORDINATOR_URL:-http://opcua-coordinator:8000}
@@ -45,23 +49,16 @@ services:
       - OPCUA_GATEWAY_LOG_LEVEL=${OPCUA_GATEWAY_LOG_LEVEL:-INFO}
     ports:
       - "8001:8001"
-    restart: unless-stopped
     networks:
       - factory-net
 
   opcua-coordinator:
-    build:
-      context: ./coordinator
-      dockerfile: Dockerfile
-      args:
-        OPENFACTORY_VERSION: "main"
-    image: openfactoryio/opcua_coordinator
+    image: ghcr.io/openfactoryio/opcua-coordinator
     environment:
       - KAFKA_BROKER=${KAFKA_BROKER}
       - KSQLDB_URL=${KSQLDB_URL}
     ports:
       - "8000:8000"
-    restart: unless-stopped
     networks:
       - factory-net
 
