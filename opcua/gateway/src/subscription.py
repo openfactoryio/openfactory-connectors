@@ -110,6 +110,7 @@ class SubscriptionHandler:
                 timestamp=opcua_data_timestamp(data.monitored_item.Value),
             )
         )
+        global_producer.flush()
 
     async def event_notification(self, event: Any) -> None:
         """
@@ -162,3 +163,4 @@ class SubscriptionHandler:
                 timestamp=opcua_event_timestamp(event),
             )
         )
+        global_producer.flush()
