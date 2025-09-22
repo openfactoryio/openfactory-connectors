@@ -19,7 +19,7 @@ ARG UID=1200
 ARG GID=1200
 # Arguments for version management
 ARG VERSION=dev
-ARG APPLICATION_MANUFACTURER=OpenFactory
+ARG APPLICATION_MANUFACTURER=OpenFactoryIO
 ARG OPENFACTORY_VERSION=main
 
 # Install git and create a non-root user and group
