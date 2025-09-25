@@ -1,5 +1,8 @@
 # OpenFactory Connectors
 
+![Python Version](https://img.shields.io/badge/python-3.13-blue?logo=python&logoColor=white)
+[![License: Polyform Noncommercial 1.0.0](https://img.shields.io/badge/license-Polyform%20Noncommercial%201.0.0-green.svg)](LICENSE)
+
 **OpenFactory-Connectors** is a collection of protocol connectors that bridge industrial devices with the OpenFactory platform.
 
 Each connector is responsible for collecting data from a specific protocol or ecosystem and streaming it into Kafka in a unified format.
