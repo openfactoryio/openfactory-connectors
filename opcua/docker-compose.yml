@@ -40,7 +40,7 @@
 
 services:
   opcua-gateway:
-    image: ghcr.io/openfactoryio/opcua-gateway
+    image: openfactoryio/opcua-gateway
     environment:
       - GATEWAY_HOST=opcua-gateway
       - COORDINATOR_URL=${COORDINATOR_URL:-http://opcua-coordinator:8000}
@@ -53,7 +53,7 @@ services:
       - factory-net
 
   opcua-coordinator:
-    image: ghcr.io/openfactoryio/opcua-coordinator
+    image: openfactoryio/opcua-coordinator
     environment:
       - KAFKA_BROKER=${KAFKA_BROKER}
       - KSQLDB_URL=${KSQLDB_URL}
