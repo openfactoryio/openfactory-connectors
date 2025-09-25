@@ -9,7 +9,7 @@ Each connector is responsible for collecting data from a specific protocol or ec
 
 ## 🔗 Supported Connectors
 
-- **OPC UA**  
+- **[OPC UA](opcua)**  
   - `OPCUA-Coordinator`: assigns devices to gateways.  
   - `OPCUA-Gateway`: connects to one or more OPC UA servers, collects data, and streams to Kafka.
 
@@ -37,3 +37,5 @@ Each connector comes with its own README for details on setup, configuration, an
 ## ⚖️ License
 
 This project is licensed under the [Polyform Noncommercial License 1.0.0](LICENSE).
+
+Use, modification, and distribution of this software are permitted for academic, research, and personal purposes, provided that such use is non-commercial in nature.
