@@ -215,7 +215,7 @@ async def register_device(req: RegisterDeviceRequest):
         logger.error("❌ Failed:", e)
 
     # register gateway with Producer Asset
-    producer = Asset(asset_uuid="OPCUA-COORDINATOR",
+    producer = Asset(asset_uuid=device_uuid.upper + '-PRODUCER',
                      ksqlClient=ksql, bootstrap_servers=os.getenv("KAFKA_BROKER"))
     producer.add_attribute(
         AssetAttribute(
