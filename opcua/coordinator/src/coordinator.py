@@ -262,6 +262,19 @@ async def unregister_device(device_uuid: str):
 
     # Remove from registry
     del device_assignments[device_uuid]
+
+    # Deregister gateway with Producer Asset
+    producer = Asset(asset_uuid=device_uuid.upper() + '-PRODUCER',
+                     ksqlClient=ksql, bootstrap_servers=os.getenv("KAFKA_BROKER"))
+    producer.add_attribute(
+        AssetAttribute(
+            id='opcua-gateway',
+            value='UNAVAILABLE',
+            type='Events',
+            tag='ProducerURI'
+        )
+    )
+
     logger.info(f"Device {device_uuid} unregistered from {assigned_gateway}")
 
     return {"status": "unregistered", "device_uuid": device_uuid, "gateway": assigned_gateway}
