@@ -110,6 +110,10 @@ class DeviceMonitor:
                 await self._cleanup()
                 raise
             except Exception as e:
+                if "BadNoMatch" in str(e):
+                    self.log.error(f"[{self.dev_uuid}] Device cannot be resolved with {self.schema.server.uri}: {e}")
+                    await self._cleanup()
+                    break
                 self.log.error(f"[{self.dev_uuid}] OPC UA client error: {type(e).__name__}: {e}")
                 self.log.debug(traceback.format_exc())
                 try:
