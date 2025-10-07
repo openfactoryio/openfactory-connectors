@@ -121,8 +121,10 @@ async def register_gateway(req: RegisterGatewayRequest):
     gateway_host = req.gateway_host
     if gateway_host not in gateways:
         gateways.append(gateway_host)
-    gateway_uuid = urlparse(gateway_host).hostname.upper()
+    index = gateways.index(gateway_host) + 1
+    gateway_uuid = f"OPCUA-GATEWAY-{index}"
     coordinator.add_reference_below(gateway_uuid)
+
     # Register OPC UA Gateway Attributes
     register_asset(asset_uuid=gateway_uuid, uns=None, asset_type='OpenFactoryApp',
                    ksqlClient=ksql, bootstrap_servers=os.getenv("KAFKA_BROKER"))
