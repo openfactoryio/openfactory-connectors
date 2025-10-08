@@ -1,13 +1,14 @@
 # COORDINATOR_LOCAL_DEV=1 python -m opcua.coordinator.src.coordinator
 
+# TODO
+# A version where the background task is fully async using httpx.AsyncClient
+
 import os
 import logging
-import requests
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import Dict
-from urllib.parse import urlparse
 
 from openfactory.kafka import KSQLDBClient
 from openfactory.assets import Asset, AssetAttribute
@@ -175,7 +176,7 @@ async def register_gateway(req: RegisterGatewayRequest):
 
 
 @app.post("/register_device")
-async def register_device(req: RegisterDeviceRequest):
+async def register_device(req: RegisterDeviceRequest, background_tasks: BackgroundTasks):
     """
     Register a new OPC UA device and assign it to a gateway.
 
@@ -184,6 +185,7 @@ async def register_device(req: RegisterDeviceRequest):
 
     Args:
         req (RegisterDeviceRequest): Payload containing the device information.
+        background_tasks (BackgroundTasks): FastAPI-injected object used to schedule background tasks that run after the response is sent.
 
     Raises:
         HTTPException: If no gateways are registered or the device is already registered.
@@ -201,24 +203,32 @@ async def register_device(req: RegisterDeviceRequest):
     if device_uuid in device_assignments:
         raise HTTPException(status_code=400, detail=f"Device {device_uuid} already registered.")
 
-    # Simple round-robin assignment
+    # Round-robin assignment
     assigned_gateway = gateways[len(device_assignments) % len(gateways)]
     device_assignments[device_uuid] = assigned_gateway
     logger.info(f"Device {device_uuid} assigned to {assigned_gateway}")
 
-    # Notify gateway
+    # Define async-safe notification function
+    def notify_gateway_sync(url, payload):
+        import requests
+        try:
+            resp = requests.post(url, json=payload, timeout=5)  # 5s timeout
+            resp.raise_for_status()
+            logger.info(f"✅ Gateway notified: {url} response={resp.status_code}")
+        except Exception as e:
+            logger.error(f"❌ Failed to notify gateway {url}: {e}")
+
+    # Schedule gateway notification in background thread
     url = f"{assigned_gateway}/add_device"
     payload = {"device": req.device.model_dump()}
-    try:
-        resp = requests.post(url, json=payload)
-        resp.raise_for_status()
-        logger.info("✅ Success:", resp.json())
-    except Exception as e:
-        logger.error("❌ Failed:", e)
+    background_tasks.add_task(notify_gateway_sync, url, payload)
 
-    # register gateway with Producer Asset
-    producer = Asset(asset_uuid=device_uuid.upper() + '-PRODUCER',
-                     ksqlClient=ksql, bootstrap_servers=os.getenv("KAFKA_BROKER"))
+    # Register Producer Asset (blocking minimal setup, can also move to background if needed)
+    producer = Asset(
+        asset_uuid=device_uuid.upper() + '-PRODUCER',
+        ksqlClient=ksql,
+        bootstrap_servers=os.getenv("KAFKA_BROKER")
+    )
     producer.add_attribute(
         AssetAttribute(
             id='opcua-gateway',
@@ -232,12 +242,13 @@ async def register_device(req: RegisterDeviceRequest):
 
 
 @app.delete("/unregister_device/{device_uuid}")
-async def unregister_device(device_uuid: str):
+async def unregister_device(device_uuid: str, background_tasks: BackgroundTasks):
     """
     Unregister a device and notify its assigned gateway to remove it.
 
     Args:
         device_uuid (str): UUID of the device to unregister.
+        background_tasks (BackgroundTasks): FastAPI-injected object used to schedule background tasks that run after the response is sent.
 
     Raises:
         HTTPException: If the device is not registered or gateway call fails.
@@ -253,21 +264,29 @@ async def unregister_device(device_uuid: str):
 
     assigned_gateway = device_assignments[device_uuid]
 
-    # Notify gateway
-    url = f"{assigned_gateway}/remove_device/{device_uuid}"
-    try:
-        resp = requests.delete(url)
-        resp.raise_for_status()
-    except Exception as e:
-        logger.error(f"❌ Failed to remove {device_uuid} from {assigned_gateway}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to contact gateway")
+    # Background notification function
+    def notify_remove():
+        import requests
+        url = f"{assigned_gateway}/remove_device/{device_uuid}"
+        try:
+            resp = requests.delete(url, timeout=5)  # 5-second timeout
+            resp.raise_for_status()
+            logger.info(f"✅ Gateway notified to remove {device_uuid}: {url} response={resp.status_code}")
+        except Exception as e:
+            logger.error(f"❌ Failed to notify {assigned_gateway} for {device_uuid}: {e}")
 
-    # Remove from registry
+    # Schedule background task
+    background_tasks.add_task(notify_remove)
+
+    # Remove from local registry immediately
     del device_assignments[device_uuid]
 
-    # Deregister gateway with Producer Asset
-    producer = Asset(asset_uuid=device_uuid.upper() + '-PRODUCER',
-                     ksqlClient=ksql, bootstrap_servers=os.getenv("KAFKA_BROKER"))
+    # Deregister Producer Asset
+    producer = Asset(
+        asset_uuid=device_uuid.upper() + '-PRODUCER',
+        ksqlClient=ksql,
+        bootstrap_servers=os.getenv("KAFKA_BROKER")
+    )
     producer.add_attribute(
         AssetAttribute(
             id='opcua-gateway',
@@ -277,7 +296,7 @@ async def unregister_device(device_uuid: str):
         )
     )
 
-    logger.info(f"Device {device_uuid} unregistered from {assigned_gateway}")
+    logger.info(f"Device {device_uuid} unregistered locally from {assigned_gateway}")
 
     return {"status": "unregistered", "device_uuid": device_uuid, "gateway": assigned_gateway}
 
