@@ -1,5 +1,6 @@
 # OpenFactory Connectors
 
+[![Dev Container Ready](https://img.shields.io/badge/devcontainer-ready-green?logo=visualstudiocode\&labelColor=2c2c2c)](.devcontainer/README.md)
 ![Python Version](https://img.shields.io/badge/python-3.13-blue?logo=python&logoColor=white)
 [![License: Polyform Noncommercial 1.0.0](https://img.shields.io/badge/license-Polyform%20Noncommercial%201.0.0-green.svg)](LICENSE)
 <img src="https://img.shields.io/badge/release-pre--release-yellow" alt="Pre-Release" />

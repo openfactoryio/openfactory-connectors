@@ -1,0 +1,29 @@
+{
+  "name": "OpenFactory-Connectors",
+  "image": "mcr.microsoft.com/devcontainers/python:2.0.2-3.13-bullseye",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2.12.4": {},
+    "ghcr.io/openfactoryio/openfactory-sdk/infra": {
+      "openfactory-version": "main"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.shell.linux": "/bin/bash"
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-azuretools.vscode-docker"
+      ]
+    }
+  },
+  "containerEnv": {
+    "OPENFACTORY_ENV": "dev",
+    "ENVIRONMENT": "local",
+    "DEPLOYMENT_PLATFORM": "docker",
+    "OPENFACTORY_UNS_SCHEMA": "/workspaces/openfactory-connectors/.devcontainer/uns.yml",
+    "OPCUA_CONNECTOR_COORDINATOR": "http://localhost:8000"
+  },
+  "postCreateCommand": "pip install -e .[dev]"
+}

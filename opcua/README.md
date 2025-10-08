@@ -66,27 +66,17 @@ Example for **two OPC UA Gateways**:
 
 ```yml
 services:
-  opcua-gateway-1:
+  opcua-gateway:
     image: ghcr.io/openfactoryio/opcua-gateway:<VERSION>
     environment:
-      - GATEWAY_HOST=opcua-gateway-1
       - COORDINATOR_URL=http://opcua-coordinator:8000
       - KAFKA_BROKER=${KAFKA_BROKER}
       - KSQLDB_URL=${KSQLDB_URL}
       - OPCUA_GATEWAY_LOG_LEVEL=INFO
     networks:
       - factory-net
-
-  opcua-gateway-2:
-    image: ghcr.io/openfactoryio/opcua-gateway:<VERSION>
-    environment:
-      - GATEWAY_HOST=opcua-gateway-2
-      - COORDINATOR_URL=http://opcua-coordinator:8000
-      - KAFKA_BROKER=${KAFKA_BROKER}
-      - KSQLDB_URL=${KSQLDB_URL}
-      - OPCUA_GATEWAY_LOG_LEVEL=INFO
-    networks:
-      - factory-net
+    deploy:
+      replicas: 2
 
   opcua-coordinator:
     image: ghcr.io/openfactoryio/opcua-coordinator:<VERSION>
@@ -116,13 +106,24 @@ This will launch the Coordinator and Gateways inside your OpenFactory cluster.
 
 ## 🧪 Deployment for Developers
 
-For local development, you can use the provided `docker-compose.yml` in this repo.
+For development in a [devcontainer](../.devcontainer/README.md), you can use the provided `docker-compose.yml` in this repo.
 
-### Local Docker
+### Local Docker in DevContainer
 
 ```bash
+cd opcua
 docker compose up -d
 ```
+
+To deploy some virtual OPC UA sensors use
+```bash
+docker run -d --name virtual-opcua-sensor -p 4840:4840 -e NUM_SENSORS=2 ghcr.io/openfactoryio/virtual-opcua-sensor
+```
+and
+```bash
+ofa device up debug/device.yml
+```
+to deploy the assets in OpenFactory.
 
 ### Docker Swarm
 

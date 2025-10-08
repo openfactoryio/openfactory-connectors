@@ -32,7 +32,6 @@
 #
 # Ports:
 #   Coordinator API: 8000
-#   Gateway API:     8001
 #
 # External network required:
 #   factory-net
@@ -42,13 +41,10 @@ services:
   opcua-gateway:
     image: ghcr.io/openfactoryio/opcua-gateway
     environment:
-      - GATEWAY_HOST=opcua-gateway
-      - COORDINATOR_URL=${COORDINATOR_URL:-http://opcua-coordinator:8000}
+      - COORDINATOR_URL=http://opcua-coordinator:8000
       - KAFKA_BROKER=${KAFKA_BROKER}
       - KSQLDB_URL=${KSQLDB_URL}
       - OPCUA_GATEWAY_LOG_LEVEL=${OPCUA_GATEWAY_LOG_LEVEL:-INFO}
-    ports:
-      - "8001:8001"
     networks:
       - factory-net
 
