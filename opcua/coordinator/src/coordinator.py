@@ -5,6 +5,8 @@
 
 import os
 import logging
+import time
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
@@ -13,7 +15,7 @@ from typing import Dict
 from openfactory.kafka import KSQLDBClient
 from openfactory.assets import Asset, AssetAttribute
 from openfactory.schemas.devices import Device
-from openfactory.utils import register_asset
+from openfactory.utils import register_asset, deregister_asset
 
 
 # ----------------------------
@@ -26,6 +28,57 @@ logging.basicConfig(
 logger = logging.getLogger("opcua-coordinator")
 
 
+# ----------------------------
+# In-memory store
+# ----------------------------
+# device_uuid -> gateway_host
+device_assignments: Dict[str, str] = {}
+
+# gateway_host -> {"last_seen": float, "devices": {device_uuid: ...}}
+gateways_info: Dict[str, Dict] = {}
+
+
+# ----------------------------
+# Helper functions
+# ----------------------------
+async def _cleanup_expired_gateways():
+    """
+    Remove gateways that haven't re-registered within GATEWAY_TIMEOUT seconds.
+    Also remove their device assignments.
+    """
+    GATEWAY_TIMEOUT = 60  # seconds
+    while True:
+        now = time.time()
+        for g_host, info in list(gateways_info.items()):
+            if now - info["last_seen"] > GATEWAY_TIMEOUT:
+                logger.warning(f"Gateway {g_host} timed out, removing.")
+
+                # Remove all device assignments belonging to this gateway
+                for dev, gw in list(device_assignments.items()):
+                    if gw == g_host:
+                        del device_assignments[dev]
+                        logger.warning(f"Deregister {dev} from OpenFactory")
+                        deregister_asset(asset_uuid=dev, ksqlClient=ksql)
+                        deregister_asset(asset_uuid=dev + '-PRODUCER', ksqlClient=ksql)
+
+                # Clean up gateway records
+                del gateways_info[g_host]
+
+        # Sleep before next cleanup iteration
+        await asyncio.sleep(10)
+
+
+def _update_device_assignments_from_gateway(gateway_host: str, devices: Dict[str, dict]):
+    """
+    Rebuild device_assignments mapping from a gateway's reported devices.
+    """
+    for dev_uuid in devices.keys():
+        device_assignments[dev_uuid] = gateway_host
+
+
+# ----------------------------
+# FastAPI lifespan
+# ----------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -44,11 +97,22 @@ async def lifespan(app: FastAPI):
     # This runs at app startup
     import os
     if os.getenv("COORDINATOR_LOCAL_DEV") == "1":
-        gateways.append("http://localhost:8001")
-        print("Added localhost gateway:", gateways)
-    yield
-    # App shutdown logic here if needed
+        # register a dummy localhost gateway for dev
+        gateways_info["http://localhost:8001"] = {"devices": {}, "last_seen": time.time()}
+        print("Added localhost gateway:", list(gateways_info.keys()))
 
+    # Start cleanup coroutine in the background
+    cleanup_task = asyncio.create_task(_cleanup_expired_gateways())
+
+    yield  # <-- control returns to FastAPI while the app is running
+
+    # App shutdown logic
+    cleanup_task.cancel()
+
+
+# ----------------------------
+# FastAPI app
+# ----------------------------
 app = FastAPI(title="OPCUA Coordinator", version="0.1", lifespan=lifespan)
 ksql = KSQLDBClient(os.getenv("KSQLDB_URL"))
 
@@ -91,21 +155,21 @@ coordinator.add_attribute(
 )
 
 
-# In-memory store: device_uuid -> gateway_id
-device_assignments: Dict[str, str] = {}
-
-# Gateway pool
-gateways = []
-
-
+# ----------------------------
+# Pydantic models
+# ----------------------------
 class RegisterGatewayRequest(BaseModel):
     gateway_host: str
+    devices: Dict[str, dict] | None = None
 
 
 class RegisterDeviceRequest(BaseModel):
     device: Device
 
 
+# ----------------------------
+# Endpoints
+# ----------------------------
 @app.post("/register_gateway")
 async def register_gateway(req: RegisterGatewayRequest):
     """
@@ -120,59 +184,79 @@ async def register_gateway(req: RegisterGatewayRequest):
             - "gateway_host": The registered gateway host URL
     """
     gateway_host = req.gateway_host
-    if gateway_host not in gateways:
-        gateways.append(gateway_host)
-    index = gateways.index(gateway_host) + 1
-    gateway_uuid = f"OPCUA-GATEWAY-{index}"
-    coordinator.add_reference_below(gateway_uuid)
 
-    # Register OPC UA Gateway Attributes
-    register_asset(asset_uuid=gateway_uuid, uns=None, asset_type='OpenFactoryApp',
-                   ksqlClient=ksql, bootstrap_servers=os.getenv("KAFKA_BROKER"))
-    gateway = Asset(asset_uuid=gateway_uuid,
-                    ksqlClient=ksql, bootstrap_servers=os.getenv("KAFKA_BROKER"))
-    gateway.add_attribute(
-        AssetAttribute(
-            id='avail',
-            value="AVAILABLE",
-            tag="Availability",
-            type="Events"
+    is_new = gateway_host not in gateways_info
+
+    # Update gateway info
+    gateways_info[gateway_host] = {
+        "last_seen": time.time(),
+        "devices": req.devices or gateways_info.get(gateway_host, {}).get("devices", {}),
+    }
+
+    if is_new:
+        index = len(gateways_info)
+        gateway_uuid = f"OPCUA-GATEWAY-{index}"
+        coordinator.add_reference_below(gateway_uuid)
+
+        # Register OPC UA Gateway Attributes
+        register_asset(asset_uuid=gateway_uuid, uns=None, asset_type='OpenFactoryApp',
+                       ksqlClient=ksql, bootstrap_servers=os.getenv("KAFKA_BROKER"))
+        gateway = Asset(asset_uuid=gateway_uuid,
+                        ksqlClient=ksql, bootstrap_servers=os.getenv("KAFKA_BROKER"))
+        gateway.add_attribute(
+            AssetAttribute(
+                id='avail',
+                value="AVAILABLE",
+                tag="Availability",
+                type="Events"
+            )
         )
-    )
-    gateway.add_attribute(
-        AssetAttribute(
-            id='uri',
-            value=gateway_host,
-            tag="GatewayURI",
-            type="Events"
+        gateway.add_attribute(
+            AssetAttribute(
+                id='uri',
+                value=gateway_host,
+                tag="GatewayURI",
+                type="Events"
+            )
         )
-    )
-    gateway.add_attribute(
-        AssetAttribute(
-            id='application_manufacturer',
-            value='OpenFactoryIO',
-            type='Events',
-            tag='Application.Manufacturer'
+        gateway.add_attribute(
+            AssetAttribute(
+                id='application_manufacturer',
+                value='OpenFactoryIO',
+                type='Events',
+                tag='Application.Manufacturer'
+            )
         )
-    )
-    gateway.add_attribute(
-        AssetAttribute(
-            id='application_license',
-            value='Polyform Noncommercial License 1.0.0',
-            type='Events',
-            tag='Application.License'
+        gateway.add_attribute(
+            AssetAttribute(
+                id='application_license',
+                value='Polyform Noncommercial License 1.0.0',
+                type='Events',
+                tag='Application.License'
+            )
         )
-    )
-    gateway.add_attribute(
-        AssetAttribute(
-            id='application_version',
-            value=os.environ.get('APPLICATION_VERSION'),
-            type='Events',
-            tag='Application.Version'
+        gateway.add_attribute(
+            AssetAttribute(
+                id='application_version',
+                value=os.environ.get('APPLICATION_VERSION'),
+                type='Events',
+                tag='Application.Version'
+            )
         )
-    )
-    logger.info(f"Registred new gateway {gateway_host}")
-    return {"status": "registered", "gateway_host": gateway_host}
+        logger.info(f"Registered new gateway {gateway_host}")
+    else:
+        logger.info(f"Refreshed gateway {gateway_host} (periodic re-registration)")
+
+    # Update device assignments from this gateway's reported devices
+    if req.devices:
+        _update_device_assignments_from_gateway(gateway_host, req.devices)
+
+    return {
+        "status": "registered",
+        "gateway_host": gateway_host,
+        "device_count": len(req.devices or {}),
+        "known_gateways": len(gateways_info),
+    }
 
 
 @app.post("/register_device")
@@ -195,7 +279,7 @@ async def register_device(req: RegisterDeviceRequest, background_tasks: Backgrou
             - "device_uuid": UUID of the registered device
             - "assigned_gateway": Host URL of the assigned gateway
     """
-    if not gateways:
+    if not gateways_info:
         raise HTTPException(status_code=500, detail="No gateways registered")
 
     device_uuid = req.device.uuid
@@ -204,7 +288,8 @@ async def register_device(req: RegisterDeviceRequest, background_tasks: Backgrou
         raise HTTPException(status_code=400, detail=f"Device {device_uuid} already registered.")
 
     # Round-robin assignment
-    assigned_gateway = gateways[len(device_assignments) % len(gateways)]
+    gateway_hosts = list(gateways_info.keys())
+    assigned_gateway = gateway_hosts[len(device_assignments) % len(gateway_hosts)]
     device_assignments[device_uuid] = assigned_gateway
     logger.info(f"Device {device_uuid} assigned to {assigned_gateway}")
 
@@ -320,7 +405,10 @@ async def get_gateways():
     Returns:
         List[str]: A list of gateway host URLs currently registered with the coordinator.
     """
-    return gateways
+    return {
+        gateway: {"device_count": len(info["devices"]), "last_seen": info["last_seen"]}
+        for gateway, info in gateways_info.items()
+    }
 
 
 # ----------------------------
