@@ -15,13 +15,42 @@ To run the gateway:
     python -m opcua.gateway.src.main
 """
 
-from fastapi import FastAPI
+import asyncio
 import uvicorn
+from fastapi import FastAPI
+from contextlib import asynccontextmanager
+from .registration import register_gateway_periodically
 from .api import router as api_router
 from .utils import setup_logging
 from .config import OPCUA_GATEWAY_PORT, LOG_LEVEL
 
-app = FastAPI(title="OPCUA Gateway", version="0.1")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager for the FastAPI application.
+
+    Starts the periodic gateway registration task and cancels it cleanly at shutdown.
+
+    Args:
+        app (FastAPI): The FastAPI application instance.
+
+    Yields:
+        None
+    """
+    task = asyncio.create_task(register_gateway_periodically(app.logger))
+
+    yield  # <-- control returns to FastAPI while the app is running
+
+    # App shutdown logic
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        app.logger.info("Gateway registration task cancelled.")
+
+
+app = FastAPI(title="OPCUA Gateway", version="0.1", lifespan=lifespan)
 app.logger = setup_logging(level=LOG_LEVEL)
 app.include_router(api_router)
 
