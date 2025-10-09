@@ -25,5 +25,5 @@
     "OPENFACTORY_UNS_SCHEMA": "/workspaces/openfactory-connectors/.devcontainer/uns.yml",
     "OPCUA_CONNECTOR_COORDINATOR": "http://localhost:8000"
   },
-  "postCreateCommand": "pip install -e .[dev]"
+  "postCreateCommand": "pip install -e .[dev] && ./dev-setup.sh"
 }
