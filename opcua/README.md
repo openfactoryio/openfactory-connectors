@@ -110,10 +110,18 @@ For development in a [devcontainer](../.devcontainer/README.md), you can use the
 
 ### Local Docker in DevContainer
 
+Deploy the OpenFactory OPC UA Connector stack with:
 ```bash
 cd opcua
 docker compose up -d
 ```
+
+> ⚠️ **Note:**<br>
+> After making changes to the source code, rebuild the Docker image before deploying:
+> ```bash
+> docker compose build
+> ```
+> This ensures your changes are included in the container.
 
 To deploy some virtual OPC UA sensors use
 ```bash
