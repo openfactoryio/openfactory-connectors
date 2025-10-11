@@ -2,6 +2,7 @@ import asyncio
 import httpx
 import socket
 import logging
+from fastapi import FastAPI
 from .config import COORDINATOR_URL, OPCUA_GATEWAY_PORT
 from .state import _active_device_defs
 
@@ -15,7 +16,7 @@ async def _get_gateway_url():
     return f"http://{ip}:{OPCUA_GATEWAY_PORT}"
 
 
-async def register_gateway_periodically(logger: logging.Logger) -> None:
+async def register_gateway_periodically(logger: logging.Logger, app: FastAPI) -> None:
     """
     Periodically register (or re-register) this gateway with the coordinator.
     This coroutine continuously sends the gateway's URL to the coordinator
@@ -25,6 +26,7 @@ async def register_gateway_periodically(logger: logging.Logger) -> None:
 
     Args:
         logger (logging.Logger): Logger instance to record registration events.
+        app (FastAPI): current application
 
     Raises:
         None: Exceptions are caught and logged internally.
@@ -40,10 +42,13 @@ async def register_gateway_periodically(logger: logging.Logger) -> None:
                 }
                 response = await client.post(f"{COORDINATOR_URL}/register_gateway", json=payload)
                 if response.status_code == 200:
+                    data = response.json()
+                    app.gateway_id = data.get("gateway_id")
                     logger.debug(f"Re-registered gateway: {g_host}")
                 else:
                     logger.warning(f"Failed to register gateway {g_host}, status={response.status_code}")
             except Exception as e:
+                app.gateway_id = 'UNAVAILABLE'
                 logger.error(f"Error registering gateway {g_host}: {e}")
 
             await asyncio.sleep(GATEWAY_RETRY_INTERVAL)
