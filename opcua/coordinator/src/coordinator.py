@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import TypedDict, Dict, Set
+from confluent_kafka import Producer
 
 from openfactory.kafka import KSQLDBClient
 from openfactory.assets import Asset, AssetAttribute
@@ -48,7 +49,7 @@ logger.info(f"Dynamic thread limit: {THREAD_TASK_LIMIT} (CPUs: {CPU_COUNT}, per 
 
 
 # ----------------------------
-# Async helper functions
+# Helper functions
 # ----------------------------
 async def create_asset_async(asset_uuid: str, asset_type="OpenFactoryApp") -> Asset:
     """
@@ -126,6 +127,34 @@ async def _cleanup_expired_gateways():
 
 
 # ----------------------------
+# Coordinator startup helper: create OPC UA assignment tables
+# ----------------------------
+async def create_opcua_assignment_tables():
+    """ Ensure that the KSQLDB tables for OPC UA gateway assignments exist. """
+    logger.info("Creating OPC UA assignment tables if they do not exist.")
+
+    # Source table
+    ksql.statement_query("""
+    CREATE TABLE IF NOT EXISTS OPCUA_DEVICE_ASSIGNMENT_SOURCE (
+        DEVICE_UUID STRING PRIMARY KEY,
+        GATEWAY_HOST STRING
+    ) WITH (
+        KAFKA_TOPIC='opcua_device_assignment_topic',
+        VALUE_FORMAT='JSON',
+        PARTITIONS=1
+    );
+    """)
+
+    # Materialized table
+    ksql.statement_query("""
+    CREATE TABLE IF NOT EXISTS OPCUA_DEVICE_ASSIGNMENT AS
+        SELECT DEVICE_UUID, GATEWAY_HOST
+        FROM OPCUA_DEVICE_ASSIGNMENT_SOURCE
+        EMIT CHANGES;
+    """)
+
+
+# ----------------------------
 # FastAPI lifespan
 # ----------------------------
 @asynccontextmanager
@@ -148,7 +177,11 @@ async def lifespan(app: FastAPI):
         gateways_info["http://localhost:8001"] = {"devices": set(), "last_seen": time.time()}
         print("Added localhost gateway:", list(gateways_info.keys()))
 
+    # Create OPC UA assignment tables
+    await create_opcua_assignment_tables()
+
     # Coordinator registration
+    logger.info("Register OPC UA Coordinator with OpenFactory.")
     global coordinator
     coordinator = await create_asset_async("OPCUA-COORDINATOR")
     coordinator.add_attribute(
@@ -165,6 +198,7 @@ async def lifespan(app: FastAPI):
     )
 
     # Start cleanup coroutine
+    logger.info("Start Gateways cleanup task.")
     cleanup_task = asyncio.create_task(_cleanup_expired_gateways())
 
     try:
@@ -195,6 +229,7 @@ app = FastAPI(title="OPCUA Coordinator",
               version=os.environ.get('APPLICATION_VERSION'),
               lifespan=lifespan)
 ksql = KSQLDBClient(os.getenv("KSQLDB_URL"))
+kafka_producer = Producer({'bootstrap.servers': os.getenv("KAFKA_BROKER")})
 
 
 # ----------------------------
@@ -298,8 +333,25 @@ async def register_device(req: RegisterDeviceRequest):
         except Exception as e:
             logger.error(f"❌ Failed to notify gateway {url}: {e}")
 
+    async def persist_assignment():
+        """
+        Persists assignment.
+        Limit concurrent registrations using a semaphore to prevent thread exhaustion.
+        """
+        async with thread_semaphore:
+            try:
+                await asyncio.to_thread(
+                    ksql.insert_into_stream,
+                    "OPCUA_DEVICE_ASSIGNMENT_SOURCE",
+                    [{"DEVICE_UUID": device_uuid, "GATEWAY_HOST": assigned_gateway}]
+                )
+                logger.info(f"Recorded assignment of device {device_uuid} to gateway {assigned_gateway} in KSQLDB")
+            except Exception as e:
+                logger.error(f"Failed to record assignment of {device_uuid} in KSQLDB: {e}")
+
     async def register_producer_safe():
         """
+        Register Producer.
         Limit concurrent registrations using a semaphore to prevent thread exhaustion.
         """
         async with thread_semaphore:
@@ -318,6 +370,7 @@ async def register_device(req: RegisterDeviceRequest):
     async with asyncio.TaskGroup() as tg:
         tg.create_task(notify_gateway())
         tg.create_task(register_producer_safe())
+        tg.create_task(persist_assignment())
 
     return {"device_uuid": device_uuid, "assigned_gateway": assigned_gateway}
 
@@ -368,9 +421,27 @@ async def unregister_device(device_uuid: str):
             except Exception as e:
                 logger.error(f"❌ Failed to deregister producer for {device_uuid}: {e}")
 
+    async def remove_assignment():
+        """
+        Remove assignment from KSQLDB (tombstone).
+        Limit concurrent deregistrations using a semaphore to prevent thread exhaustion.
+        """
+        async with thread_semaphore:
+            def _send_tombstone():
+                kafka_producer.produce('opcua_device_assignment_topic', key=device_uuid, value=None)
+                kafka_producer.flush()
+                logger.debug(f"Sent tombstone for device {device_uuid} to topic 'opcua_device_assignment_topic'")
+
+            try:
+                await asyncio.to_thread(_send_tombstone)
+                logger.info(f"✅ Assignment removed from KSQLDB for {device_uuid}")
+            except Exception as e:
+                logger.error(f"❌ Failed to remove assignment from KSQLDB for {device_uuid}: {e}")
+
     async with asyncio.TaskGroup() as tg:
         tg.create_task(notify_remove())
         tg.create_task(deregister_producer())
+        tg.create_task(remove_assignment())
 
     logger.info(f"Device {device_uuid} unregistered locally from {assigned_gateway}")
 
