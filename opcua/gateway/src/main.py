@@ -18,12 +18,88 @@ To run the gateway:
 import os
 import asyncio
 import uvicorn
+import logging
+import json
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
+from openfactory.kafka import KSQLDBClient
+from openfactory.schemas.devices import Device
 from .registration import register_gateway_periodically
 from .api import router as api_router
 from .utils import setup_logging
 from .config import OPCUA_GATEWAY_PORT, LOG_LEVEL
+from .state import _active_device_defs
+
+
+async def rebuild_gateway_state(logger: logging.Logger, gateway_id: str) -> None:
+    """
+    Rebuild in-memory gateway state from ksqlDB based on OPC UA assignments.
+
+    Only devices assigned to this gateway (from OPCUA_DEVICE_ASSIGNMENT) are loaded.
+
+    Args:
+        logger (logging.Logger): Logger instance.
+        gateway_id (str): The identifier of the current gateway.
+    """
+    logger.info(f"Rebuilding gateway state for {gateway_id} from ksqlDB...")
+
+    def _fetch_assigned_devices():
+        """ Blocking I/O to fetch assigned device UUIDs. """
+        query = f"""
+        SELECT DEVICE_UUID
+        FROM OPCUA_DEVICE_ASSIGNMENT
+        WHERE GATEWAY_HOST = '{gateway_id}';
+        """
+        return ksql.query(query)
+
+    def _fetch_device_configs(device_uuids: list[str]):
+        """ Blocking I/O to fetch connector configs for the given devices. """
+        if not device_uuids:
+            return []
+        uuids_str = ",".join(f"'{u}'" for u in device_uuids)
+        query = f"""
+        SELECT ASST_UUID, CONNECTOR_CONFIG
+        FROM DEVICE_CONNECTOR
+        WHERE ASST_UUID IN ({uuids_str});
+        """
+        return ksql.query(query)
+
+    try:
+        # Get assigned device UUIDs
+        assigned_rows = await asyncio.to_thread(_fetch_assigned_devices)
+        assigned_uuids = [r["DEVICE_UUID"] for r in assigned_rows if r.get("DEVICE_UUID")]
+        logger.info(f"Found {len(assigned_uuids)} devices assigned to this gateway.")
+
+        if not assigned_uuids:
+            logger.info("No devices assigned; nothing to rebuild.")
+            return
+
+        # Fetch their connector configs
+        config_rows = await asyncio.to_thread(_fetch_device_configs, assigned_uuids)
+        logger.debug(f"Fetched {len(config_rows)} connector configs from DEVICE_CONNECTOR.")
+
+        # Populate _active_device_defs
+        _active_device_defs.clear()
+        for row in config_rows:
+            dev_uuid = row.get("ASST_UUID")
+            raw_config = row.get("CONNECTOR_CONFIG")
+
+            if not dev_uuid or not raw_config:
+                logger.warning("Skipping malformed ksqlDB row: %s", row)
+                continue
+
+            try:
+                cfg = json.loads(raw_config)
+                device = Device(**cfg["device"])
+                _active_device_defs[dev_uuid] = device
+                logger.debug(f"Loaded device {dev_uuid} into gateway state.")
+            except Exception as e:
+                logger.warning(f"Failed to parse device {dev_uuid}: {e}")
+
+        logger.info(f"✅ Restored {_active_device_defs.__len__()} devices for gateway {gateway_id}.")
+
+    except Exception as e:
+        logger.error(f"❌ Error rebuilding gateway state for {gateway_id}: {e}")
 
 
 @asynccontextmanager
@@ -39,7 +115,11 @@ async def lifespan(app: FastAPI):
     Yields:
         None
     """
-    task = asyncio.create_task(register_gateway_periodically(app.logger))
+    # Rebuild local in-memory state before starting anything ---
+    await rebuild_gateway_state(app.logger, app.gateway_id)
+
+    # Start background task ---
+    task = asyncio.create_task(register_gateway_periodically(app.logger, app))
 
     yield  # <-- control returns to FastAPI while the app is running
 
@@ -51,10 +131,12 @@ async def lifespan(app: FastAPI):
         app.logger.info("Gateway registration task cancelled.")
 
 
+ksql = KSQLDBClient(os.getenv("KSQLDB_URL"))
 app = FastAPI(title="OPCUA Gateway",
               version=os.environ.get('APPLICATION_VERSION'),
               lifespan=lifespan)
 app.logger = setup_logging(level=LOG_LEVEL)
+app.gateway_id = 'UNAVAILABLE'
 app.include_router(api_router)
 
 
