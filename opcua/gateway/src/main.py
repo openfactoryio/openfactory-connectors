@@ -15,6 +15,7 @@ To run the gateway:
     python -m opcua.gateway.src.main
 """
 
+import os
 import asyncio
 import uvicorn
 from fastapi import FastAPI
@@ -50,7 +51,9 @@ async def lifespan(app: FastAPI):
         app.logger.info("Gateway registration task cancelled.")
 
 
-app = FastAPI(title="OPCUA Gateway", version="0.1", lifespan=lifespan)
+app = FastAPI(title="OPCUA Gateway",
+              version=os.environ.get('APPLICATION_VERSION'),
+              lifespan=lifespan)
 app.logger = setup_logging(level=LOG_LEVEL)
 app.include_router(api_router)
 

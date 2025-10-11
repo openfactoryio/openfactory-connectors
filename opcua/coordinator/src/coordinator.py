@@ -191,7 +191,9 @@ async def lifespan(app: FastAPI):
 # ----------------------------
 # FastAPI app
 # ----------------------------
-app = FastAPI(title="OPCUA Coordinator", version=os.environ.get('APPLICATION_VERSION'), lifespan=lifespan)
+app = FastAPI(title="OPCUA Coordinator",
+              version=os.environ.get('APPLICATION_VERSION'),
+              lifespan=lifespan)
 ksql = KSQLDBClient(os.getenv("KSQLDB_URL"))
 
 
