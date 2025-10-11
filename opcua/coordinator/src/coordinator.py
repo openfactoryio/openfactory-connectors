@@ -38,10 +38,11 @@ gateways_info: Dict[str, Dict] = {}
 # Dynamic semaphore limit based on CPU count
 # ----------------------------
 CPU_COUNT = os.cpu_count() or 1
-THREADS_PER_CPU = 4  
-THREAD_TASK_LIMIT = CPU_COUNT * THREADS_PER_CPU
-producer_semaphore = asyncio.Semaphore(THREAD_TASK_LIMIT)
-logger.info(f"Dynamic thread limit: {THREAD_TASK_LIMIT} (CPUs: {CPU_COUNT}, per CPU: {THREADS_PER_CPU})")
+THREADS_PER_CPU = int(os.getenv("THREADS_PER_CPU", "4"))
+MAX_THREAD_TASK_LIMIT = int(os.getenv("MAX_THREAD_TASK_LIMIT", 32))
+THREAD_TASK_LIMIT = min(CPU_COUNT * THREADS_PER_CPU, MAX_THREAD_TASK_LIMIT)
+thread_semaphore = asyncio.Semaphore(THREAD_TASK_LIMIT)
+logger.info(f"Dynamic thread limit: {THREAD_TASK_LIMIT} (CPUs: {CPU_COUNT}, per CPU: {THREADS_PER_CPU}, max: {MAX_THREAD_TASK_LIMIT})")
 
 
 # ----------------------------
@@ -65,9 +66,10 @@ async def create_asset_async(asset_uuid: str, asset_type="OpenFactoryApp") -> As
     Raises:
         Exception: Propagates any exception raised by the underlying registration call.
     """
-    await asyncio.to_thread(register_asset, asset_uuid, None, asset_type, ksql, os.getenv("KAFKA_BROKER"))
-    asset = Asset(asset_uuid=asset_uuid, ksqlClient=ksql, bootstrap_servers=os.getenv("KAFKA_BROKER"))
-    return asset
+    async with thread_semaphore:
+        await asyncio.to_thread(register_asset, asset_uuid, None, asset_type, ksql, os.getenv("KAFKA_BROKER"))
+        asset = Asset(asset_uuid=asset_uuid, ksqlClient=ksql, bootstrap_servers=os.getenv("KAFKA_BROKER"))
+        return asset
 
 
 async def deregister_asset_async(asset_uuid: str):
@@ -87,7 +89,8 @@ async def deregister_asset_async(asset_uuid: str):
     Raises:
         Exception: Propagates any exception raised during the deregistration process.
     """
-    await asyncio.to_thread(deregister_asset, asset_uuid, ksqlClient=ksql)
+    async with thread_semaphore:
+        await asyncio.to_thread(deregister_asset, asset_uuid, ksqlClient=ksql)
 
 
 async def _cleanup_expired_gateways():
@@ -105,11 +108,8 @@ async def _cleanup_expired_gateways():
                     for dev, gw in list(device_assignments.items()):
                         if gw == g_host:
                             del device_assignments[dev]
-                            # limit concurrent deregistrations
-                            async with producer_semaphore:
-                                await deregister_asset_async(dev)
-                            async with producer_semaphore:
-                                await deregister_asset_async(dev + '-PRODUCER')
+                            asyncio.create_task(deregister_asset_async(dev))
+                            asyncio.create_task(deregister_asset_async(dev + '-PRODUCER'))
                     del gateways_info[g_host]
             await asyncio.sleep(10)
     except asyncio.CancelledError:
@@ -313,7 +313,7 @@ async def register_device(req: RegisterDeviceRequest):
         """
         Limit concurrent registrations using a semaphore to prevent thread exhaustion.
         """
-        async with producer_semaphore:
+        async with thread_semaphore:
             try:
                 producer = await create_asset_async(device_uuid.upper() + '-PRODUCER')
                 producer.add_attribute(AssetAttribute(
@@ -370,7 +370,7 @@ async def unregister_device(device_uuid: str):
         """
         Limit concurrent deregistrations using a semaphore to prevent thread exhaustion.
         """
-        async with producer_semaphore:
+        async with thread_semaphore:
             try:
                 await deregister_asset_async(device_uuid.upper() + '-PRODUCER')
                 producer = await create_asset_async(device_uuid.upper() + '-PRODUCER')
