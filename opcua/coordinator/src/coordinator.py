@@ -1,14 +1,10 @@
-# COORDINATOR_LOCAL_DEV=1 python -m opcua.coordinator.src.coordinator
-
-# TODO
-# A version where the background task is fully async using httpx.AsyncClient
-
 import os
 import logging
 import time
 import asyncio
+import httpx
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Dict
 
@@ -39,8 +35,51 @@ gateways_info: Dict[str, Dict] = {}
 
 
 # ----------------------------
-# Helper functions
+# Async helper functions
 # ----------------------------
+async def create_asset_async(asset_uuid: str, asset_type="OpenFactoryApp") -> Asset:
+    """
+    Asynchronously register and create an OpenFactory Asset.
+
+    This coroutine runs the synchronous `register_asset` function in a background thread,
+    allowing non-blocking registration of the asset within the event loop. It then
+    instantiates and returns an `Asset` object configured with the same UUID.
+
+    Args:
+        asset_uuid (str): The unique identifier (UUID) for the asset to register.
+        asset_type (str, optional): The asset type to register, defaults to "OpenFactoryApp".
+
+    Returns:
+        Asset: The created `Asset` instance associated with the given `asset_uuid`.
+
+    Raises:
+        Exception: Propagates any exception raised by the underlying registration call.
+    """
+    await asyncio.to_thread(register_asset, asset_uuid, None, asset_type, ksql, os.getenv("KAFKA_BROKER"))
+    asset = Asset(asset_uuid=asset_uuid, ksqlClient=ksql, bootstrap_servers=os.getenv("KAFKA_BROKER"))
+    return asset
+
+
+async def deregister_asset_async(asset_uuid: str):
+    """
+    Asynchronously deregister an existing OpenFactory Asset.
+
+    This coroutine executes the synchronous `deregister_asset` function in a background
+    thread to prevent blocking the event loop. It safely removes the asset definition
+    from OpenFactory.
+
+    Args:
+        asset_uuid (str): The unique identifier (UUID) of the asset to deregister.
+
+    Returns:
+        None
+
+    Raises:
+        Exception: Propagates any exception raised during the deregistration process.
+    """
+    await asyncio.to_thread(deregister_asset, asset_uuid, ksqlClient=ksql)
+
+
 async def _cleanup_expired_gateways():
     """
     Remove gateways that haven't re-registered within GATEWAY_TIMEOUT seconds.
@@ -58,8 +97,8 @@ async def _cleanup_expired_gateways():
                     if gw == g_host:
                         del device_assignments[dev]
                         logger.warning(f"Deregister {dev} from OpenFactory")
-                        deregister_asset(asset_uuid=dev, ksqlClient=ksql)
-                        deregister_asset(asset_uuid=dev + '-PRODUCER', ksqlClient=ksql)
+                        asyncio.create_task(deregister_asset_async(dev))
+                        asyncio.create_task(deregister_asset_async(dev + '-PRODUCER'))
 
                 # Clean up gateway records
                 del gateways_info[g_host]
@@ -95,16 +134,31 @@ async def lifespan(app: FastAPI):
         None
     """
     # This runs at app startup
-    import os
     if os.getenv("COORDINATOR_LOCAL_DEV") == "1":
         # register a dummy localhost gateway for dev
         gateways_info["http://localhost:8001"] = {"devices": {}, "last_seen": time.time()}
         print("Added localhost gateway:", list(gateways_info.keys()))
 
-    # Start cleanup coroutine in the background
+    # Fully async coordinator registration
+    global coordinator
+    coordinator = await create_asset_async("OPCUA-COORDINATOR")
+    coordinator.add_attribute(
+        AssetAttribute(id='avail', value="AVAILABLE", tag="Availability", type="Events")
+    )
+    coordinator.add_attribute(
+        AssetAttribute(id='application_manufacturer', value='OpenFactoryIO', type='Events', tag='Application.Manufacturer')
+    )
+    coordinator.add_attribute(
+        AssetAttribute(id='application_license', value='Polyform Noncommercial License 1.0.0', type='Events', tag='Application.License')
+    )
+    coordinator.add_attribute(
+        AssetAttribute(id='application_version', value=os.environ.get('APPLICATION_VERSION'), type='Events', tag='Application.Version')
+    )
+
+    # Start cleanup coroutine
     cleanup_task = asyncio.create_task(_cleanup_expired_gateways())
 
-    yield  # <-- control returns to FastAPI while the app is running
+    yield  # Control returns to FastAPI
 
     # App shutdown logic
     cleanup_task.cancel()
@@ -113,46 +167,8 @@ async def lifespan(app: FastAPI):
 # ----------------------------
 # FastAPI app
 # ----------------------------
-app = FastAPI(title="OPCUA Coordinator", version="0.1", lifespan=lifespan)
+app = FastAPI(title="OPCUA Coordinator", version=os.environ.get('APPLICATION_VERSION'), lifespan=lifespan)
 ksql = KSQLDBClient(os.getenv("KSQLDB_URL"))
-
-# Register OPC UA Coordinator Attributes
-register_asset(asset_uuid="OPCUA-COORDINATOR", uns=None, asset_type='OpenFactoryApp',
-               ksqlClient=ksql, bootstrap_servers=os.getenv("KAFKA_BROKER"))
-coordinator = Asset(asset_uuid="OPCUA-COORDINATOR",
-                    ksqlClient=ksql, bootstrap_servers=os.getenv("KAFKA_BROKER"))
-coordinator.add_attribute(
-    AssetAttribute(
-        id='avail',
-        value="AVAILABLE",
-        tag="Availability",
-        type="Events"
-    )
-)
-coordinator.add_attribute(
-    AssetAttribute(
-        id='application_manufacturer',
-        value='OpenFactoryIO',
-        type='Events',
-        tag='Application.Manufacturer'
-    )
-)
-coordinator.add_attribute(
-    AssetAttribute(
-        id='application_license',
-        value='Polyform Noncommercial License 1.0.0',
-        type='Events',
-        tag='Application.License'
-    )
-)
-coordinator.add_attribute(
-    AssetAttribute(
-        id='application_version',
-        value=os.environ.get('APPLICATION_VERSION'),
-        type='Events',
-        tag='Application.Version'
-    )
-)
 
 
 # ----------------------------
@@ -198,51 +214,14 @@ async def register_gateway(req: RegisterGatewayRequest):
         gateway_uuid = f"OPCUA-GATEWAY-{index}"
         coordinator.add_reference_below(gateway_uuid)
 
-        # Register OPC UA Gateway Attributes
-        register_asset(asset_uuid=gateway_uuid, uns=None, asset_type='OpenFactoryApp',
-                       ksqlClient=ksql, bootstrap_servers=os.getenv("KAFKA_BROKER"))
-        gateway = Asset(asset_uuid=gateway_uuid,
-                        ksqlClient=ksql, bootstrap_servers=os.getenv("KAFKA_BROKER"))
-        gateway.add_attribute(
-            AssetAttribute(
-                id='avail',
-                value="AVAILABLE",
-                tag="Availability",
-                type="Events"
-            )
-        )
-        gateway.add_attribute(
-            AssetAttribute(
-                id='uri',
-                value=gateway_host,
-                tag="GatewayURI",
-                type="Events"
-            )
-        )
-        gateway.add_attribute(
-            AssetAttribute(
-                id='application_manufacturer',
-                value='OpenFactoryIO',
-                type='Events',
-                tag='Application.Manufacturer'
-            )
-        )
-        gateway.add_attribute(
-            AssetAttribute(
-                id='application_license',
-                value='Polyform Noncommercial License 1.0.0',
-                type='Events',
-                tag='Application.License'
-            )
-        )
-        gateway.add_attribute(
-            AssetAttribute(
-                id='application_version',
-                value=os.environ.get('APPLICATION_VERSION'),
-                type='Events',
-                tag='Application.Version'
-            )
-        )
+        # Async registration
+        gateway = await create_asset_async(gateway_uuid)
+        gateway.add_attribute(AssetAttribute(id='avail', value="AVAILABLE", tag="Availability", type="Events"))
+        gateway.add_attribute(AssetAttribute(id='uri', value=gateway_host, tag="GatewayURI", type="Events"))
+        gateway.add_attribute(AssetAttribute(id='application_manufacturer', value='OpenFactoryIO', type='Events', tag='Application.Manufacturer'))
+        gateway.add_attribute(AssetAttribute(id='application_license', value='Polyform Noncommercial License 1.0.0', type='Events', tag='Application.License'))
+        gateway.add_attribute(AssetAttribute(id='application_version', value=os.environ.get('APPLICATION_VERSION'), type='Events', tag='Application.Version'))
+
         logger.info(f"Registered new gateway {gateway_host}")
     else:
         logger.info(f"Refreshed gateway {gateway_host} (periodic re-registration)")
@@ -260,7 +239,7 @@ async def register_gateway(req: RegisterGatewayRequest):
 
 
 @app.post("/register_device")
-async def register_device(req: RegisterDeviceRequest, background_tasks: BackgroundTasks):
+async def register_device(req: RegisterDeviceRequest):
     """
     Register a new OPC UA device and assign it to a gateway.
 
@@ -269,7 +248,6 @@ async def register_device(req: RegisterDeviceRequest, background_tasks: Backgrou
 
     Args:
         req (RegisterDeviceRequest): Payload containing the device information.
-        background_tasks (BackgroundTasks): FastAPI-injected object used to schedule background tasks that run after the response is sent.
 
     Raises:
         HTTPException: If no gateways are registered or the device is already registered.
@@ -293,47 +271,36 @@ async def register_device(req: RegisterDeviceRequest, background_tasks: Backgrou
     device_assignments[device_uuid] = assigned_gateway
     logger.info(f"Device {device_uuid} assigned to {assigned_gateway}")
 
-    # Define async-safe notification function
-    def notify_gateway_sync(url, payload):
-        import requests
+    async def notify_gateway_async(url, payload):
         try:
-            resp = requests.post(url, json=payload, timeout=5)  # 5s timeout
-            resp.raise_for_status()
-            logger.info(f"✅ Gateway notified: {url} response={resp.status_code}")
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(url, json=payload, timeout=5)
+                resp.raise_for_status()
+                logger.info(f"✅ Gateway notified: {url} response={resp.status_code}")
         except Exception as e:
             logger.error(f"❌ Failed to notify gateway {url}: {e}")
 
-    # Schedule gateway notification in background thread
     url = f"{assigned_gateway}/add_device"
     payload = {"device": req.device.model_dump()}
-    background_tasks.add_task(notify_gateway_sync, url, payload)
+    asyncio.create_task(notify_gateway_async(url, payload))
 
-    # Register Producer Asset (blocking minimal setup, can also move to background if needed)
-    producer = Asset(
-        asset_uuid=device_uuid.upper() + '-PRODUCER',
-        ksqlClient=ksql,
-        bootstrap_servers=os.getenv("KAFKA_BROKER")
-    )
-    producer.add_attribute(
-        AssetAttribute(
-            id='opcua-gateway',
-            value=assigned_gateway,
-            type='Events',
-            tag='ProducerURI'
-        )
-    )
+    # Async producer registration
+    async def register_producer():
+        producer = await create_asset_async(device_uuid.upper() + '-PRODUCER')
+        producer.add_attribute(AssetAttribute(id='opcua-gateway', value=assigned_gateway, type='Events', tag='ProducerURI'))
+
+    asyncio.create_task(register_producer())
 
     return {"device_uuid": device_uuid, "assigned_gateway": assigned_gateway}
 
 
 @app.delete("/unregister_device/{device_uuid}")
-async def unregister_device(device_uuid: str, background_tasks: BackgroundTasks):
+async def unregister_device(device_uuid: str):
     """
     Unregister a device and notify its assigned gateway to remove it.
 
     Args:
         device_uuid (str): UUID of the device to unregister.
-        background_tasks (BackgroundTasks): FastAPI-injected object used to schedule background tasks that run after the response is sent.
 
     Raises:
         HTTPException: If the device is not registered or gateway call fails.
@@ -349,37 +316,26 @@ async def unregister_device(device_uuid: str, background_tasks: BackgroundTasks)
 
     assigned_gateway = device_assignments[device_uuid]
 
-    # Background notification function
-    def notify_remove():
-        import requests
+    async def notify_remove_async():
         url = f"{assigned_gateway}/remove_device/{device_uuid}"
         try:
-            resp = requests.delete(url, timeout=5)  # 5-second timeout
-            resp.raise_for_status()
-            logger.info(f"✅ Gateway notified to remove {device_uuid}: {url} response={resp.status_code}")
+            async with httpx.AsyncClient() as client:
+                resp = await client.delete(url, timeout=5)
+                resp.raise_for_status()
+                logger.info(f"✅ Gateway notified to remove {device_uuid}: {url} response={resp.status_code}")
         except Exception as e:
             logger.error(f"❌ Failed to notify {assigned_gateway} for {device_uuid}: {e}")
 
-    # Schedule background task
-    background_tasks.add_task(notify_remove)
+    asyncio.create_task(notify_remove_async())
 
-    # Remove from local registry immediately
     del device_assignments[device_uuid]
 
-    # Deregister Producer Asset
-    producer = Asset(
-        asset_uuid=device_uuid.upper() + '-PRODUCER',
-        ksqlClient=ksql,
-        bootstrap_servers=os.getenv("KAFKA_BROKER")
-    )
-    producer.add_attribute(
-        AssetAttribute(
-            id='opcua-gateway',
-            value='UNAVAILABLE',
-            type='Events',
-            tag='ProducerURI'
-        )
-    )
+    async def deregister_producer():
+        await deregister_asset_async(device_uuid.upper() + '-PRODUCER')
+        producer = await create_asset_async(device_uuid.upper() + '-PRODUCER')
+        producer.add_attribute(AssetAttribute(id='opcua-gateway', value='UNAVAILABLE', type='Events', tag='ProducerURI'))
+
+    asyncio.create_task(deregister_producer())
 
     logger.info(f"Device {device_uuid} unregistered locally from {assigned_gateway}")
 
