@@ -30,10 +30,12 @@ logger = logging.getLogger("opcua-coordinator")
 # ----------------------------
 class GatewayInfo(TypedDict):
     last_seen: float
+    url: str
     devices: Set[str]
 
 
 # gateway_info -> {"last_seen": float, "devices": set[str]}
+# dict key is the OPC UA Gateway UUID, (OPCUA-GATEWAY-1, OPCUA-GATEWAY-2, ...)
 gateways_info: Dict[str, GatewayInfo] = {}
 
 
@@ -106,9 +108,9 @@ async def _cleanup_expired_gateways():
     try:
         while True:
             now = time.time()
-            for g_host, info in list(gateways_info.items()):
+            for g_id, info in list(gateways_info.items()):
                 if now - info["last_seen"] > GATEWAY_TIMEOUT:
-                    logger.warning(f"Gateway {g_host} timed out, removing.")
+                    logger.warning(f"Gateway {g_id} timed out, removing.")
 
                     devices = list(info["devices"])
                     for i in range(0, len(devices), BATCH_SIZE):
@@ -117,7 +119,7 @@ async def _cleanup_expired_gateways():
                             for dev_uuid in batch:
                                 tg.create_task(deregister_asset_async(dev_uuid))
                                 tg.create_task(deregister_asset_async(dev_uuid + '-PRODUCER'))
-                    del gateways_info[g_host]
+                    del gateways_info[g_id]
             await asyncio.sleep(10)
     except asyncio.CancelledError:
         logger.info("Cleanup task cancelled gracefully")
@@ -172,11 +174,6 @@ async def lifespan(app: FastAPI):
     Yields:
         None
     """
-    # This runs at app startup
-    if os.getenv("COORDINATOR_LOCAL_DEV") == "1":
-        gateways_info["http://localhost:8001"] = {"devices": set(), "last_seen": time.time()}
-        print("Added localhost gateway:", list(gateways_info.keys()))
-
     # Create OPC UA assignment tables
     await create_opcua_assignment_tables()
 
@@ -261,19 +258,38 @@ async def register_gateway(req: RegisterGatewayRequest):
             - "gateway_host": The registered gateway host URL
     """
     gateway_host = req.gateway_host
-    is_new = gateway_host not in gateways_info
+    # Check if gateway already exists
+    gateway_uuid = next((k for k, info in gateways_info.items() if info["url"] == gateway_host), None)
 
-    gateways_info[gateway_host] = {
-        "last_seen": time.time(),
-        "devices": set(req.devices.keys()) if req.devices else gateways_info.get(gateway_host, {}).get("devices", set()),
-    }
+    if gateway_uuid:
+        gateways_info[gateway_uuid] = {
+            "last_seen": time.time(),
+            "url": gateway_host,
+            "devices": set(req.devices.keys()) if req.devices else gateways_info[gateway_uuid]["devices"],
+        }
+        logger.debug(f"Refreshed gateway {gateway_uuid} ({gateway_host}) (periodic re-registration)")
+    else:
+        existing_ids = [
+            int(k.replace("OPCUA-GATEWAY-", ""))
+            for k in gateways_info.keys()
+            if k.startswith("OPCUA-GATEWAY-")
+        ]
 
-    if is_new:
-        index = len(gateways_info)
-        gateway_uuid = f"OPCUA-GATEWAY-{index}"
+        # Find first unused ID
+        new_index = 1
+        existing_ids_set = set(existing_ids)
+        while new_index in existing_ids_set:
+            new_index += 1
+
+        gateway_uuid = f"OPCUA-GATEWAY-{new_index}"
+        gateways_info[gateway_uuid] = {
+            "last_seen": time.time(),
+            "url": gateway_host,
+            "devices": set(req.devices.keys()) if req.devices else set(),
+        }
+
+        # Gateway attributes
         coordinator.add_reference_below(gateway_uuid)
-
-        # Coordinator attributes
         gateway = await create_asset_async(gateway_uuid)
         gateway.add_attribute(AssetAttribute(id='avail', value="AVAILABLE", tag="Availability", type="Events"))
         gateway.add_attribute(AssetAttribute(id='uri', value=gateway_host, tag="GatewayURI", type="Events"))
@@ -281,14 +297,12 @@ async def register_gateway(req: RegisterGatewayRequest):
         gateway.add_attribute(AssetAttribute(id='application_license', value='Polyform Noncommercial License 1.0.0', type='Events', tag='Application.License'))
         gateway.add_attribute(AssetAttribute(id='application_version', value=os.environ.get('APPLICATION_VERSION'), type='Events', tag='Application.Version'))
 
-        logger.info(f"Registered new gateway {gateway_host}")
-    else:
-        logger.debug(f"Refreshed gateway {gateway_host} (periodic re-registration)")
+        logger.info(f"Registered new gateway {gateway_uuid} ({gateway_host})")
 
     return {
         "status": "registered",
-        "gateway_host": gateway_host,
-        "device_count": len(gateways_info[gateway_host]["devices"]),
+        "gateway_id": gateway_uuid,
+        "device_count": len(gateways_info[gateway_uuid]["devices"]),
         "known_gateways": len(gateways_info),
     }
 
@@ -323,7 +337,7 @@ async def register_device(req: RegisterDeviceRequest):
     logger.info(f"Device {device_uuid} assigned to {assigned_gateway}")
 
     async def notify_gateway():
-        url = f"{assigned_gateway}/add_device"
+        url = f"{gateways_info[assigned_gateway]["url"]}/add_device"
         payload = {"device": req.device.model_dump()}
         try:
             async with httpx.AsyncClient() as client:
@@ -393,7 +407,7 @@ async def unregister_device(device_uuid: str):
 
     async def notify_remove():
         """ Deregister device with Gateway. """
-        url = f"{assigned_gateway}/remove_device/{device_uuid}"
+        url = f"{gateways_info[assigned_gateway]["url"]}/remove_device/{device_uuid}"
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.delete(url, timeout=5)
