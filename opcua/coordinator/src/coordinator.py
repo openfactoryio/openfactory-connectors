@@ -35,6 +35,16 @@ gateways_info: Dict[str, Dict] = {}
 
 
 # ----------------------------
+# Dynamic semaphore limit based on CPU count
+# ----------------------------
+CPU_COUNT = os.cpu_count() or 1
+THREADS_PER_CPU = 4  
+THREAD_TASK_LIMIT = CPU_COUNT * THREADS_PER_CPU
+producer_semaphore = asyncio.Semaphore(THREAD_TASK_LIMIT)
+logger.info(f"Dynamic thread limit: {THREAD_TASK_LIMIT} (CPUs: {CPU_COUNT}, per CPU: {THREADS_PER_CPU})")
+
+
+# ----------------------------
 # Async helper functions
 # ----------------------------
 async def create_asset_async(asset_uuid: str, asset_type="OpenFactoryApp") -> Asset:
@@ -95,8 +105,11 @@ async def _cleanup_expired_gateways():
                     for dev, gw in list(device_assignments.items()):
                         if gw == g_host:
                             del device_assignments[dev]
-                            asyncio.create_task(deregister_asset_async(dev))
-                            asyncio.create_task(deregister_asset_async(dev + '-PRODUCER'))
+                            # limit concurrent deregistrations
+                            async with producer_semaphore:
+                                await deregister_asset_async(dev)
+                            async with producer_semaphore:
+                                await deregister_asset_async(dev + '-PRODUCER')
                     del gateways_info[g_host]
             await asyncio.sleep(10)
     except asyncio.CancelledError:
@@ -296,23 +309,26 @@ async def register_device(req: RegisterDeviceRequest):
         except Exception as e:
             logger.error(f"❌ Failed to notify gateway {url}: {e}")
 
-    async def register_producer():
-        try:
-            producer = await create_asset_async(device_uuid.upper() + '-PRODUCER')
-            producer.add_attribute(AssetAttribute(
-                id='opcua-gateway',
-                value=assigned_gateway,
-                type='Events',
-                tag='ProducerURI'
-            ))
-            logger.info(f"✅ Producer registered for {device_uuid}")
-        except Exception as e:
-            logger.error(f"❌ Failed to register producer for {device_uuid}: {e}")
+    async def register_producer_safe():
+        """
+        Limit concurrent registrations using a semaphore to prevent thread exhaustion.
+        """
+        async with producer_semaphore:
+            try:
+                producer = await create_asset_async(device_uuid.upper() + '-PRODUCER')
+                producer.add_attribute(AssetAttribute(
+                    id='opcua-gateway',
+                    value=assigned_gateway,
+                    type='Events',
+                    tag='ProducerURI'
+                ))
+                logger.info(f"✅ Producer registered for {device_uuid}")
+            except Exception as e:
+                logger.error(f"❌ Failed to register producer for {device_uuid}: {e}")
 
-    # Run both tasks concurrently and wait for them to finish
     async with asyncio.TaskGroup() as tg:
         tg.create_task(notify_gateway())
-        tg.create_task(register_producer())
+        tg.create_task(register_producer_safe())
 
     return {"device_uuid": device_uuid, "assigned_gateway": assigned_gateway}
 
@@ -351,20 +367,23 @@ async def unregister_device(device_uuid: str):
             logger.error(f"❌ Failed to notify {assigned_gateway} for {device_uuid}: {e}")
 
     async def deregister_producer():
-        try:
-            await deregister_asset_async(device_uuid.upper() + '-PRODUCER')
-            producer = await create_asset_async(device_uuid.upper() + '-PRODUCER')
-            producer.add_attribute(AssetAttribute(
-                id='opcua-gateway',
-                value='UNAVAILABLE',
-                type='Events',
-                tag='ProducerURI'
-            ))
-            logger.info(f"✅ Producer deregistered for {device_uuid}")
-        except Exception as e:
-            logger.error(f"❌ Failed to deregister producer for {device_uuid}: {e}")
+        """
+        Limit concurrent deregistrations using a semaphore to prevent thread exhaustion.
+        """
+        async with producer_semaphore:
+            try:
+                await deregister_asset_async(device_uuid.upper() + '-PRODUCER')
+                producer = await create_asset_async(device_uuid.upper() + '-PRODUCER')
+                producer.add_attribute(AssetAttribute(
+                    id='opcua-gateway',
+                    value='UNAVAILABLE',
+                    type='Events',
+                    tag='ProducerURI'
+                ))
+                logger.info(f"✅ Producer deregistered for {device_uuid}")
+            except Exception as e:
+                logger.error(f"❌ Failed to deregister producer for {device_uuid}: {e}")
 
-    # Run both async tasks concurrently and wait for them to finish
     async with asyncio.TaskGroup() as tg:
         tg.create_task(notify_remove())
         tg.create_task(deregister_producer())
