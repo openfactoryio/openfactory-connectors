@@ -3,6 +3,7 @@ import httpx
 import socket
 import logging
 from .config import COORDINATOR_URL, OPCUA_GATEWAY_PORT
+from .state import _active_device_defs
 
 GATEWAY_RETRY_INTERVAL = 30  # seconds
 
@@ -33,7 +34,11 @@ async def register_gateway_periodically(logger: logging.Logger) -> None:
     async with httpx.AsyncClient(timeout=10.0) as client:
         while True:
             try:
-                response = await client.post(f"{COORDINATOR_URL}/register_gateway", json={"gateway_host": g_host})
+                payload = {
+                    "gateway_host": g_host,
+                    "devices": {uuid: {} for uuid in _active_device_defs.keys()}
+                }
+                response = await client.post(f"{COORDINATOR_URL}/register_gateway", json=payload)
                 if response.status_code == 200:
                     logger.debug(f"Re-registered gateway: {g_host}")
                 else:
