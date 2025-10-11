@@ -37,7 +37,7 @@ COPY requirements_docker.txt .
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements_docker.txt
 
-# Install OpenFactory explicitly from GitHub (if not included in requirements)
+# Install OpenFactory
 RUN pip install --no-cache-dir \
       "git+https://github.com/openfactoryio/openfactory-core.git@${OPENFACTORY_VERSION}"
 

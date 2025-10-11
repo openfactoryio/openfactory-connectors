@@ -20,15 +20,17 @@ import asyncio
 import uvicorn
 import logging
 import json
+import httpx
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from openfactory.kafka import KSQLDBClient
 from openfactory.schemas.devices import Device
-from .registration import register_gateway_periodically
+from .registration import register_gateway_periodically, register_gateway
 from .api import router as api_router
 from .utils import setup_logging
 from .config import OPCUA_GATEWAY_PORT, LOG_LEVEL
-from .state import _active_device_defs
+from .state import _active_device_defs, _active_tasks
+from .monitor import monitor_device
 
 
 async def rebuild_gateway_state(logger: logging.Logger, gateway_id: str) -> None:
@@ -58,9 +60,9 @@ async def rebuild_gateway_state(logger: logging.Logger, gateway_id: str) -> None
             return []
         uuids_str = ",".join(f"'{u}'" for u in device_uuids)
         query = f"""
-        SELECT ASST_UUID, CONNECTOR_CONFIG
+        SELECT ASSET_UUID, CONNECTOR_CONFIG
         FROM DEVICE_CONNECTOR
-        WHERE ASST_UUID IN ({uuids_str});
+        WHERE ASSET_UUID IN ({uuids_str});
         """
         return ksql.query(query)
 
@@ -81,7 +83,7 @@ async def rebuild_gateway_state(logger: logging.Logger, gateway_id: str) -> None
         # Populate _active_device_defs
         _active_device_defs.clear()
         for row in config_rows:
-            dev_uuid = row.get("ASST_UUID")
+            dev_uuid = row.get("ASSET_UUID")
             raw_config = row.get("CONNECTOR_CONFIG")
 
             if not dev_uuid or not raw_config:
@@ -93,8 +95,10 @@ async def rebuild_gateway_state(logger: logging.Logger, gateway_id: str) -> None
                 device = Device(**cfg["device"])
                 _active_device_defs[dev_uuid] = device
                 logger.debug(f"Loaded device {dev_uuid} into gateway state.")
+                task = asyncio.create_task(monitor_device(device, logger))
+                _active_tasks[device.uuid] = task
             except Exception as e:
-                logger.warning(f"Failed to parse device {dev_uuid}: {e}")
+                logger.warning(f"Failed to connect device {dev_uuid}: {e}")
 
         logger.info(f"✅ Restored {_active_device_defs.__len__()} devices for gateway {gateway_id}.")
 
@@ -115,6 +119,14 @@ async def lifespan(app: FastAPI):
     Yields:
         None
     """
+    # Register with coordinator
+    app.logger.info('Waiting for OPC UA Coordinator registration ...')
+    try:
+        await register_gateway(app.logger, app)
+        app.logger.info(f'Registered Gateway as {app.gateway_id}')
+    except Exception as e:
+        app.logger.error(f"Failed to register gateway at startup: {e}")
+
     # Rebuild local in-memory state before starting anything ---
     await rebuild_gateway_state(app.logger, app.gateway_id)
 
@@ -129,6 +141,7 @@ async def lifespan(app: FastAPI):
         await task
     except asyncio.CancelledError:
         app.logger.info("Gateway registration task cancelled.")
+    await app.http_client.aclose()
 
 
 ksql = KSQLDBClient(os.getenv("KSQLDB_URL"))
@@ -137,6 +150,7 @@ app = FastAPI(title="OPCUA Gateway",
               lifespan=lifespan)
 app.logger = setup_logging(level=LOG_LEVEL)
 app.gateway_id = 'UNAVAILABLE'
+app.http_client = httpx.AsyncClient(timeout=10.0)
 app.include_router(api_router)
 
 
