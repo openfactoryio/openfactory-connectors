@@ -85,26 +85,25 @@ async def _cleanup_expired_gateways():
     Remove gateways that haven't re-registered within GATEWAY_TIMEOUT seconds.
     Also remove their device assignments.
     """
-    GATEWAY_TIMEOUT = 60  # seconds
-    while True:
-        now = time.time()
-        for g_host, info in list(gateways_info.items()):
-            if now - info["last_seen"] > GATEWAY_TIMEOUT:
-                logger.warning(f"Gateway {g_host} timed out, removing.")
+    GATEWAY_TIMEOUT = 60
+    try:
+        while True:
+            now = time.time()
+            for g_host, info in list(gateways_info.items()):
+                if now - info["last_seen"] > GATEWAY_TIMEOUT:
+                    logger.warning(f"Gateway {g_host} timed out, removing.")
+                    for dev, gw in list(device_assignments.items()):
+                        if gw == g_host:
+                            del device_assignments[dev]
+                            asyncio.create_task(deregister_asset_async(dev))
+                            asyncio.create_task(deregister_asset_async(dev + '-PRODUCER'))
+                    del gateways_info[g_host]
+            await asyncio.sleep(10)
+    except asyncio.CancelledError:
+        logger.info("Cleanup task cancelled gracefully")
+        # Optionally do final cleanup here
 
-                # Remove all device assignments belonging to this gateway
-                for dev, gw in list(device_assignments.items()):
-                    if gw == g_host:
-                        del device_assignments[dev]
-                        logger.warning(f"Deregister {dev} from OpenFactory")
-                        asyncio.create_task(deregister_asset_async(dev))
-                        asyncio.create_task(deregister_asset_async(dev + '-PRODUCER'))
-
-                # Clean up gateway records
-                del gateways_info[g_host]
-
-        # Sleep before next cleanup iteration
-        await asyncio.sleep(10)
+        raise  # Re-raise to properly signal cancellation
 
 
 def _update_device_assignments_from_gateway(gateway_host: str, devices: Dict[str, dict]):
@@ -158,10 +157,25 @@ async def lifespan(app: FastAPI):
     # Start cleanup coroutine
     cleanup_task = asyncio.create_task(_cleanup_expired_gateways())
 
-    yield  # Control returns to FastAPI
+    try:
+        # Yield control to FastAPI
+        yield
+    except SystemExit:
+        logger.info("SystemExit caught during shutdown")
+    finally:
+        # Update coordinator availability before shutting down
+        try:
+            coordinator.add_attribute(AssetAttribute(id='avail', value="UNAVAILABLE", tag="Availability", type="Events"))
+            logger.info("Coordinator marked UNAVAILABLE")
+        except Exception as e:
+            logger.error(f"Failed to mark coordinator UNAVAILABLE: {e}")
 
-    # App shutdown logic
-    cleanup_task.cancel()
+        # Cancel and await cleanup task
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            logger.info("Cleanup task cancelled on shutdown")
 
 
 # ----------------------------
