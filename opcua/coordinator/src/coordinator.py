@@ -271,7 +271,9 @@ async def register_device(req: RegisterDeviceRequest):
     device_assignments[device_uuid] = assigned_gateway
     logger.info(f"Device {device_uuid} assigned to {assigned_gateway}")
 
-    async def notify_gateway_async(url, payload):
+    async def notify_gateway():
+        url = f"{assigned_gateway}/add_device"
+        payload = {"device": req.device.model_dump()}
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(url, json=payload, timeout=5)
@@ -280,16 +282,23 @@ async def register_device(req: RegisterDeviceRequest):
         except Exception as e:
             logger.error(f"❌ Failed to notify gateway {url}: {e}")
 
-    url = f"{assigned_gateway}/add_device"
-    payload = {"device": req.device.model_dump()}
-    asyncio.create_task(notify_gateway_async(url, payload))
-
-    # Async producer registration
     async def register_producer():
-        producer = await create_asset_async(device_uuid.upper() + '-PRODUCER')
-        producer.add_attribute(AssetAttribute(id='opcua-gateway', value=assigned_gateway, type='Events', tag='ProducerURI'))
+        try:
+            producer = await create_asset_async(device_uuid.upper() + '-PRODUCER')
+            producer.add_attribute(AssetAttribute(
+                id='opcua-gateway',
+                value=assigned_gateway,
+                type='Events',
+                tag='ProducerURI'
+            ))
+            logger.info(f"✅ Producer registered for {device_uuid}")
+        except Exception as e:
+            logger.error(f"❌ Failed to register producer for {device_uuid}: {e}")
 
-    asyncio.create_task(register_producer())
+    # Run both tasks concurrently and wait for them to finish
+    async with asyncio.TaskGroup() as tg:
+        tg.create_task(notify_gateway())
+        tg.create_task(register_producer())
 
     return {"device_uuid": device_uuid, "assigned_gateway": assigned_gateway}
 
@@ -315,8 +324,9 @@ async def unregister_device(device_uuid: str):
         raise HTTPException(status_code=404, detail=f"Device {device_uuid} not found")
 
     assigned_gateway = device_assignments[device_uuid]
+    del device_assignments[device_uuid]
 
-    async def notify_remove_async():
+    async def notify_remove():
         url = f"{assigned_gateway}/remove_device/{device_uuid}"
         try:
             async with httpx.AsyncClient() as client:
@@ -326,20 +336,32 @@ async def unregister_device(device_uuid: str):
         except Exception as e:
             logger.error(f"❌ Failed to notify {assigned_gateway} for {device_uuid}: {e}")
 
-    asyncio.create_task(notify_remove_async())
-
-    del device_assignments[device_uuid]
-
     async def deregister_producer():
-        await deregister_asset_async(device_uuid.upper() + '-PRODUCER')
-        producer = await create_asset_async(device_uuid.upper() + '-PRODUCER')
-        producer.add_attribute(AssetAttribute(id='opcua-gateway', value='UNAVAILABLE', type='Events', tag='ProducerURI'))
+        try:
+            await deregister_asset_async(device_uuid.upper() + '-PRODUCER')
+            producer = await create_asset_async(device_uuid.upper() + '-PRODUCER')
+            producer.add_attribute(AssetAttribute(
+                id='opcua-gateway',
+                value='UNAVAILABLE',
+                type='Events',
+                tag='ProducerURI'
+            ))
+            logger.info(f"✅ Producer deregistered for {device_uuid}")
+        except Exception as e:
+            logger.error(f"❌ Failed to deregister producer for {device_uuid}: {e}")
 
-    asyncio.create_task(deregister_producer())
+    # Run both async tasks concurrently and wait for them to finish
+    async with asyncio.TaskGroup() as tg:
+        tg.create_task(notify_remove())
+        tg.create_task(deregister_producer())
 
     logger.info(f"Device {device_uuid} unregistered locally from {assigned_gateway}")
 
-    return {"status": "unregistered", "device_uuid": device_uuid, "gateway": assigned_gateway}
+    return {
+        "status": "unregistered",
+        "device_uuid": device_uuid,
+        "gateway": assigned_gateway
+    }
 
 
 @app.get("/assignments")
