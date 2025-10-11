@@ -6,7 +6,7 @@ import httpx
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import Dict
+from typing import TypedDict, Dict, Set
 
 from openfactory.kafka import KSQLDBClient
 from openfactory.assets import Asset, AssetAttribute
@@ -27,11 +27,13 @@ logger = logging.getLogger("opcua-coordinator")
 # ----------------------------
 # In-memory store
 # ----------------------------
-# device_uuid -> gateway_host
-device_assignments: Dict[str, str] = {}
+class GatewayInfo(TypedDict):
+    last_seen: float
+    devices: Set[str]
 
-# gateway_host -> {"last_seen": float, "devices": {device_uuid: ...}}
-gateways_info: Dict[str, Dict] = {}
+
+# gateway_info -> {"last_seen": float, "devices": set[str]}
+gateways_info: Dict[str, GatewayInfo] = {}
 
 
 # ----------------------------
@@ -96,20 +98,24 @@ async def deregister_asset_async(asset_uuid: str):
 async def _cleanup_expired_gateways():
     """
     Remove gateways that haven't re-registered within GATEWAY_TIMEOUT seconds.
-    Also remove their device assignments.
+    Also deregister all devices that belonged to that gateway, in batches for safety.
     """
     GATEWAY_TIMEOUT = 60
+    BATCH_SIZE = 50  # Limit number of tasks scheduled at once
     try:
         while True:
             now = time.time()
             for g_host, info in list(gateways_info.items()):
                 if now - info["last_seen"] > GATEWAY_TIMEOUT:
                     logger.warning(f"Gateway {g_host} timed out, removing.")
-                    for dev, gw in list(device_assignments.items()):
-                        if gw == g_host:
-                            del device_assignments[dev]
-                            asyncio.create_task(deregister_asset_async(dev))
-                            asyncio.create_task(deregister_asset_async(dev + '-PRODUCER'))
+
+                    devices = list(info["devices"])
+                    for i in range(0, len(devices), BATCH_SIZE):
+                        batch = devices[i:i + BATCH_SIZE]
+                        async with asyncio.TaskGroup() as tg:
+                            for dev_uuid in batch:
+                                tg.create_task(deregister_asset_async(dev_uuid))
+                                tg.create_task(deregister_asset_async(dev_uuid + '-PRODUCER'))
                     del gateways_info[g_host]
             await asyncio.sleep(10)
     except asyncio.CancelledError:
@@ -117,14 +123,6 @@ async def _cleanup_expired_gateways():
         # Optionally do final cleanup here
 
         raise  # Re-raise to properly signal cancellation
-
-
-def _update_device_assignments_from_gateway(gateway_host: str, devices: Dict[str, dict]):
-    """
-    Rebuild device_assignments mapping from a gateway's reported devices.
-    """
-    for dev_uuid in devices.keys():
-        device_assignments[dev_uuid] = gateway_host
 
 
 # ----------------------------
@@ -147,11 +145,10 @@ async def lifespan(app: FastAPI):
     """
     # This runs at app startup
     if os.getenv("COORDINATOR_LOCAL_DEV") == "1":
-        # register a dummy localhost gateway for dev
-        gateways_info["http://localhost:8001"] = {"devices": {}, "last_seen": time.time()}
+        gateways_info["http://localhost:8001"] = {"devices": set(), "last_seen": time.time()}
         print("Added localhost gateway:", list(gateways_info.keys()))
 
-    # Fully async coordinator registration
+    # Coordinator registration
     global coordinator
     coordinator = await create_asset_async("OPCUA-COORDINATOR")
     coordinator.add_attribute(
@@ -227,13 +224,11 @@ async def register_gateway(req: RegisterGatewayRequest):
             - "gateway_host": The registered gateway host URL
     """
     gateway_host = req.gateway_host
-
     is_new = gateway_host not in gateways_info
 
-    # Update gateway info
     gateways_info[gateway_host] = {
         "last_seen": time.time(),
-        "devices": req.devices or gateways_info.get(gateway_host, {}).get("devices", {}),
+        "devices": set(req.devices.keys()) if req.devices else gateways_info.get(gateway_host, {}).get("devices", set()),
     }
 
     if is_new:
@@ -241,7 +236,7 @@ async def register_gateway(req: RegisterGatewayRequest):
         gateway_uuid = f"OPCUA-GATEWAY-{index}"
         coordinator.add_reference_below(gateway_uuid)
 
-        # Async registration
+        # Coordinator attributes
         gateway = await create_asset_async(gateway_uuid)
         gateway.add_attribute(AssetAttribute(id='avail', value="AVAILABLE", tag="Availability", type="Events"))
         gateway.add_attribute(AssetAttribute(id='uri', value=gateway_host, tag="GatewayURI", type="Events"))
@@ -251,16 +246,12 @@ async def register_gateway(req: RegisterGatewayRequest):
 
         logger.info(f"Registered new gateway {gateway_host}")
     else:
-        logger.info(f"Refreshed gateway {gateway_host} (periodic re-registration)")
-
-    # Update device assignments from this gateway's reported devices
-    if req.devices:
-        _update_device_assignments_from_gateway(gateway_host, req.devices)
+        logger.debug(f"Refreshed gateway {gateway_host} (periodic re-registration)")
 
     return {
         "status": "registered",
         "gateway_host": gateway_host,
-        "device_count": len(req.devices or {}),
+        "device_count": len(gateways_info[gateway_host]["devices"]),
         "known_gateways": len(gateways_info),
     }
 
@@ -289,13 +280,9 @@ async def register_device(req: RegisterDeviceRequest):
 
     device_uuid = req.device.uuid
 
-    if device_uuid in device_assignments:
-        raise HTTPException(status_code=400, detail=f"Device {device_uuid} already registered.")
-
-    # Round-robin assignment
-    gateway_hosts = list(gateways_info.keys())
-    assigned_gateway = gateway_hosts[len(device_assignments) % len(gateway_hosts)]
-    device_assignments[device_uuid] = assigned_gateway
+    # Round-robin assignment based on least devices
+    assigned_gateway = min(gateways_info.items(), key=lambda x: len(x[1]["devices"]))[0]
+    gateways_info[assigned_gateway]["devices"].add(device_uuid)
     logger.info(f"Device {device_uuid} assigned to {assigned_gateway}")
 
     async def notify_gateway():
@@ -336,27 +323,21 @@ async def register_device(req: RegisterDeviceRequest):
 @app.delete("/unregister_device/{device_uuid}")
 async def unregister_device(device_uuid: str):
     """
-    Unregister a device and notify its assigned gateway to remove it.
-
-    Args:
-        device_uuid (str): UUID of the device to unregister.
-
-    Raises:
-        HTTPException: If the device is not registered or gateway call fails.
-
-    Returns:
-        dict: Status of the unregistration with keys:
-            - "status": Unregistration status ("unregistered")
-            - "device_uuid": UUID of the unregistered device
-            - "gateway": Host URL of the gateway that was notified
+    Unregister a device from all gateways where it may exist.
     """
-    if device_uuid not in device_assignments:
+    # Find the gateway containing this device
+    assigned_gateway = None
+    for gw, info in gateways_info.items():
+        if device_uuid in info["devices"]:
+            assigned_gateway = gw
+            info["devices"].remove(device_uuid)
+            break
+
+    if not assigned_gateway:
         raise HTTPException(status_code=404, detail=f"Device {device_uuid} not found")
 
-    assigned_gateway = device_assignments[device_uuid]
-    del device_assignments[device_uuid]
-
     async def notify_remove():
+        """ Deregister device with Gateway. """
         url = f"{assigned_gateway}/remove_device/{device_uuid}"
         try:
             async with httpx.AsyncClient() as client:
@@ -368,6 +349,7 @@ async def unregister_device(device_uuid: str):
 
     async def deregister_producer():
         """
+        Deregister producer with OpenFactory.
         Limit concurrent deregistrations using a semaphore to prevent thread exhaustion.
         """
         async with thread_semaphore:
@@ -405,7 +387,7 @@ async def get_assignments():
     Returns:
         Dict[str, str]: A dictionary mapping device UUIDs to assigned gateway hosts.
     """
-    return device_assignments
+    return {dev: gw for gw, info in gateways_info.items() for dev in info["devices"]}
 
 
 @app.get("/gateways")
