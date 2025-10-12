@@ -135,23 +135,35 @@ async def create_opcua_assignment_tables():
     """ Ensure that the KSQLDB tables for OPC UA gateway assignments exist. """
     logger.info("Creating OPC UA assignment tables if they do not exist.")
 
-    # Source table
+    # Source tables
     ksql.statement_query("""
     CREATE TABLE IF NOT EXISTS OPCUA_DEVICE_ASSIGNMENT_SOURCE (
         DEVICE_UUID STRING PRIMARY KEY,
-        GATEWAY_HOST STRING
+        GATEWAY_ID STRING
     ) WITH (
         KAFKA_TOPIC='opcua_device_assignment_topic',
         VALUE_FORMAT='JSON',
         PARTITIONS=1
     );
+    CREATE TABLE IF NOT EXISTS OPCUA_GATEWAYS_SOURCE (
+        GATEWAY_ID STRING PRIMARY KEY,
+        GATEWAY_HOST STRING
+    ) WITH (
+        KAFKA_TOPIC='opcua_gateways_topic',
+        VALUE_FORMAT='JSON',
+        PARTITIONS=1
+    );
     """)
 
-    # Materialized table
+    # Materialized tables
     ksql.statement_query("""
     CREATE TABLE IF NOT EXISTS OPCUA_DEVICE_ASSIGNMENT AS
-        SELECT DEVICE_UUID, GATEWAY_HOST
+        SELECT DEVICE_UUID, GATEWAY_ID
         FROM OPCUA_DEVICE_ASSIGNMENT_SOURCE
+        EMIT CHANGES;
+    CREATE TABLE IF NOT EXISTS OPCUA_GATEWAYS AS
+        SELECT GATEWAY_ID, GATEWAY_HOST
+        FROM OPCUA_GATEWAYS_SOURCE
         EMIT CHANGES;
     """)
 
@@ -357,7 +369,7 @@ async def register_device(req: RegisterDeviceRequest):
                 await asyncio.to_thread(
                     ksql.insert_into_stream,
                     "OPCUA_DEVICE_ASSIGNMENT_SOURCE",
-                    [{"DEVICE_UUID": device_uuid, "GATEWAY_HOST": assigned_gateway}]
+                    [{"DEVICE_UUID": device_uuid, "GATEWAY_ID": assigned_gateway}]
                 )
                 logger.info(f"Recorded assignment of device {device_uuid} to gateway {assigned_gateway} in KSQLDB")
             except Exception as e:
@@ -416,21 +428,16 @@ async def unregister_device(device_uuid: str):
         except Exception as e:
             logger.error(f"❌ Failed to notify {assigned_gateway} for {device_uuid}: {e}")
 
-    async def deregister_producer():
+    async def deregister_device():
         """
-        Deregister producer with OpenFactory.
+        Deregister device and producer with OpenFactory.
         Limit concurrent deregistrations using a semaphore to prevent thread exhaustion.
         """
         async with thread_semaphore:
             try:
+                await deregister_asset_async(device_uuid.upper())
+                logger.info(f"✅ Device {device_uuid} deregistered")
                 await deregister_asset_async(device_uuid.upper() + '-PRODUCER')
-                producer = await create_asset_async(device_uuid.upper() + '-PRODUCER')
-                producer.add_attribute(AssetAttribute(
-                    id='opcua-gateway',
-                    value='UNAVAILABLE',
-                    type='Events',
-                    tag='ProducerURI'
-                ))
                 logger.info(f"✅ Producer deregistered for {device_uuid}")
             except Exception as e:
                 logger.error(f"❌ Failed to deregister producer for {device_uuid}: {e}")
@@ -454,7 +461,7 @@ async def unregister_device(device_uuid: str):
 
     async with asyncio.TaskGroup() as tg:
         tg.create_task(notify_remove())
-        tg.create_task(deregister_producer())
+        tg.create_task(deregister_device())
         tg.create_task(remove_assignment())
 
     logger.info(f"Device {device_uuid} unregistered locally from {assigned_gateway}")
