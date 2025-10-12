@@ -52,7 +52,7 @@ async def rebuild_gateway_state(logger: logging.Logger, gateway_id: str) -> None
         FROM OPCUA_DEVICE_ASSIGNMENT
         WHERE GATEWAY_ID = '{gateway_id}';
         """
-        return ksql.query(query)
+        return app.state.ksql.query(query)
 
     def _fetch_device_configs(device_uuids: list[str]):
         """ Blocking I/O to fetch connector configs for the given devices. """
@@ -64,7 +64,7 @@ async def rebuild_gateway_state(logger: logging.Logger, gateway_id: str) -> None
         FROM DEVICE_CONNECTOR
         WHERE ASSET_UUID IN ({uuids_str});
         """
-        return ksql.query(query)
+        return app.state.ksql.query(query)
 
     try:
         # Get assigned device UUIDs
@@ -144,12 +144,12 @@ async def lifespan(app: FastAPI):
     await app.state.http_client.aclose()
 
 
-ksql = KSQLDBClient(os.getenv("KSQLDB_URL"))
 app = FastAPI(title="OPCUA Gateway",
               version=os.environ.get('APPLICATION_VERSION'),
               lifespan=lifespan)
 app.state.logger = setup_logging(level=LOG_LEVEL)
 app.state.gateway_id = 'UNAVAILABLE'
+app.state.ksql = KSQLDBClient(os.getenv("KSQLDB_URL"))
 app.state.http_client = httpx.AsyncClient(timeout=10.0)
 app.include_router(api_router)
 

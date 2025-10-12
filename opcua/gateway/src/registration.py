@@ -1,6 +1,7 @@
 import asyncio
 import socket
 import logging
+import httpx
 from fastapi import FastAPI
 from .config import COORDINATOR_URL, OPCUA_GATEWAY_PORT
 from .state import _active_device_defs
@@ -17,37 +18,76 @@ async def _get_gateway_url():
 
 async def register_gateway(logger: logging.Logger, app: FastAPI) -> str:
     """
-    Register this gateway with the coordinator once and return the assigned gateway_id.
+    Register this gateway with the coordinator and return the assigned gateway_id.
+
+    The function retries registration until it successfully obtains a unique gateway_id.
+    It checks that the assigned ID is not already used by another host and
+    retries automatically if a conflict is detected, preventing race conditions when
+    multiple gateways register at the same time.
 
     Args:
         logger (logging.Logger): Logger instance for messages.
         app (FastAPI): FastAPI app instance to store the gateway_id.
 
     Returns:
-        str: The assigned gateway ID.
+        str: The successfully assigned gateway ID.
     """
     g_host = await _get_gateway_url()
 
-    try:
+    while True:
         payload = {
             "gateway_id": app.state.gateway_id,
             "gateway_host": g_host,
-            "devices": {uuid: {} for uuid in _active_device_defs.keys()}
+            "devices": {uuid: {} for uuid in _active_device_defs.keys()},
         }
-        response = await app.state.http_client.post(f"{COORDINATOR_URL}/register_gateway", json=payload)
-        if response.status_code == 200:
+
+        try:
+            # --- Try to contact the coordinator
+            response = await app.state.http_client.post(f"{COORDINATOR_URL}/register_gateway", json=payload)
+            response.raise_for_status()  # raises for 4xx/5xx
+
             data = response.json()
             gateway_id = data.get("gateway_id")
-            app.state.gateway_id = gateway_id
-            logger.info(f"✅ Gateway registered: {g_host} with ID {gateway_id}")
-            return gateway_id
-        else:
-            logger.warning(f"Failed to register gateway {g_host}, status={response.status_code}")
-    except Exception as e:
-        app.state.gateway_id = 'UNAVAILABLE'
-        logger.error(f"Error registering gateway {g_host}: {e}")
 
-    return 'UNAVAILABLE'
+            # --- Verify ownership in KSQL
+            try:
+                rows = app.state.ksql.query(
+                    f"SELECT GATEWAY_HOST FROM OPCUA_GATEWAYS WHERE GATEWAY_ID='{gateway_id}';"
+                )
+            except Exception as e:
+                logger.error(f"Failed to query OPCUA_GATEWAYS table: {e}", exc_info=True)
+                await asyncio.sleep(5)
+                continue
+
+            # --- Check for conflicts
+            conflict = any(
+                row.get("GATEWAY_HOST") and row["GATEWAY_HOST"] != g_host
+                for row in rows
+            )
+
+            if conflict:
+                logger.warning(
+                    f"⚠️ Gateway ID conflict: {gateway_id} already registered with a different host. Retrying..."
+                )
+                app.state.gateway_id = "UNAVAILABLE"
+                await asyncio.sleep(2)
+                continue
+
+            # --- Success
+            app.state.gateway_id = gateway_id
+            logger.info(f"✅ Gateway registered successfully: {g_host} with ID {gateway_id}")
+            return gateway_id
+
+        except httpx.RequestError as e:
+            logger.warning(f"Coordinator not reachable ({COORDINATOR_URL}): {e}")
+        except httpx.HTTPStatusError as e:
+            logger.warning(f"Coordinator returned HTTP error during registration: {e.response.status_code}")
+        except Exception as e:
+            logger.error(f"Unexpected error registering gateway {g_host}: {e}", exc_info=True)
+
+        # Retry logic
+        app.state.gateway_id = "UNAVAILABLE"
+        await asyncio.sleep(5)
 
 
 async def register_gateway_periodically(logger: logging.Logger, app: FastAPI) -> None:
