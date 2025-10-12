@@ -50,7 +50,7 @@ async def rebuild_gateway_state(logger: logging.Logger, gateway_id: str) -> None
         query = f"""
         SELECT DEVICE_UUID
         FROM OPCUA_DEVICE_ASSIGNMENT
-        WHERE GATEWAY_HOST = '{gateway_id}';
+        WHERE GATEWAY_ID = '{gateway_id}';
         """
         return ksql.query(query)
 
