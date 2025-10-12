@@ -168,6 +168,66 @@ async def create_opcua_assignment_tables():
     """)
 
 
+async def assign_gateway_id() -> str:
+    """
+    Assign a gateway ID for a new registration.
+
+    The function tries to reuse an existing gateway ID from gateways that are currently down
+    (based on their /status endpoint). If all known gateways are up, it generates a new gateway ID.
+
+    Returns:
+        str: A gateway ID, either reused or newly generated.
+    """
+    # Query deployed gateways from KSQL
+    try:
+        gateways_rows = ksql.query("SELECT GATEWAY_ID, GATEWAY_HOST FROM OPCUA_GATEWAYS;")
+    except Exception as e:
+        logger.error(f"Failed to query OPCUA_GATEWAYS table: {e}")
+        gateways_rows = []
+
+    gateways = {row["GATEWAY_ID"]: row["GATEWAY_HOST"] for row in gateways_rows}
+
+    # Check /status for gateway
+    async def check_status(g_id: str, url: str) -> tuple[str, bool]:
+        status_url = f"{url}/status"
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(status_url)
+                resp.raise_for_status()
+                data = resp.json()
+                return g_id, data.get("status") == "AVAILABLE"
+        except httpx.RequestError as e:
+            logger.debug(f"Gateway {g_id} ({url}) not reachable: {e}")
+            return g_id, False
+        except Exception as e:
+            logger.error(f"Unexpected error while checking gateway {g_id} ({url}): {e}", exc_info=True)
+            return g_id, False
+
+    tasks = [check_status(g_id, url) for g_id, url in gateways.items()]
+    results = await asyncio.gather(*tasks)
+
+    # Try to find an UNAVAILABLE gateway
+    for g_id, is_available in results:
+        if not is_available:
+            logger.debug(f"Assigning gateway ID {g_id}")
+            return g_id
+
+    # No UNAVAILABLE gateway found, generate a new ID
+    existing_ids = [
+        int(g_id.replace("OPCUA-GATEWAY-", ""))
+        for g_id in gateways.keys()
+        if g_id.startswith("OPCUA-GATEWAY-")
+    ]
+    new_index = 1
+    existing_ids_set = set(existing_ids)
+    while new_index in existing_ids_set:
+        new_index += 1
+
+    new_id = f"OPCUA-GATEWAY-{new_index}"
+    logger.debug(f"No unavailable gateway found, generated new ID {new_id}")
+    return new_id
+
+
 # ----------------------------
 # FastAPI lifespan
 # ----------------------------
@@ -245,6 +305,7 @@ kafka_producer = Producer({'bootstrap.servers': os.getenv("KAFKA_BROKER")})
 # Pydantic models
 # ----------------------------
 class RegisterGatewayRequest(BaseModel):
+    gateway_id: str
     gateway_host: str
     devices: Dict[str, dict] | None = None
 
@@ -262,60 +323,55 @@ async def register_gateway(req: RegisterGatewayRequest):
     Register a new OPC UA Gateway dynamically.
 
     Args:
-        req (RegisterGatewayRequest): The gateway registration payload containing the `gateway_host` URL.
+        req (RegisterGatewayRequest): Gateway registration payload.
 
     Returns:
         dict: A confirmation dictionary with keys:
-            - "status": Registration status ("registered")
-            - "gateway_host": The registered gateway host URL
+            - "status" (str): Registration status.
+            - "gateway_id" (str): The assigned gateway ID.
     """
     gateway_host = req.gateway_host
-    # Check if gateway already exists
-    gateway_uuid = next((k for k, info in gateways_info.items() if info["url"] == gateway_host), None)
 
-    if gateway_uuid:
-        gateways_info[gateway_uuid] = {
-            "last_seen": time.time(),
-            "url": gateway_host,
-            "devices": set(req.devices.keys()) if req.devices else gateways_info[gateway_uuid]["devices"],
-        }
-        logger.debug(f"Refreshed gateway {gateway_uuid} ({gateway_host}) (periodic re-registration)")
-    else:
-        existing_ids = [
-            int(k.replace("OPCUA-GATEWAY-", ""))
-            for k in gateways_info.keys()
-            if k.startswith("OPCUA-GATEWAY-")
-        ]
+    if req.gateway_id == 'UNAVAILABLE':
 
-        # Find first unused ID
-        new_index = 1
-        existing_ids_set = set(existing_ids)
-        while new_index in existing_ids_set:
-            new_index += 1
+        logger.info("Assigning Gateway ID")
+        gateway_id = await assign_gateway_id()
+        logger.info(f"Assigned {gateway_id}")
 
-        gateway_uuid = f"OPCUA-GATEWAY-{new_index}"
-        gateways_info[gateway_uuid] = {
-            "last_seen": time.time(),
-            "url": gateway_host,
-            "devices": set(req.devices.keys()) if req.devices else set(),
-        }
+        # Register Gateway in KSQLDB
+        try:
+            sql = f"""
+            INSERT INTO OPCUA_GATEWAYS_SOURCE (GATEWAY_ID, GATEWAY_HOST)
+            VALUES ('{gateway_id}', '{gateway_host}');
+            """
+            ksql.statement_query(sql)
+            logger.info(f"Registered gateway {gateway_id} in KSQLDB with host {gateway_host}")
+        except Exception as e:
+            logger.error(f"Failed to register gateway {gateway_id} in KSQLDB: {e}")
 
-        # Gateway attributes
-        coordinator.add_reference_below(gateway_uuid)
-        gateway = await create_asset_async(gateway_uuid)
+        # Register Gateway attributes
+        coordinator.add_reference_below(gateway_id)
+        gateway = await create_asset_async(gateway_id)
         gateway.add_attribute(AssetAttribute(id='avail', value="AVAILABLE", tag="Availability", type="Events"))
         gateway.add_attribute(AssetAttribute(id='uri', value=gateway_host, tag="GatewayURI", type="Events"))
         gateway.add_attribute(AssetAttribute(id='application_manufacturer', value='OpenFactoryIO', type='Events', tag='Application.Manufacturer'))
         gateway.add_attribute(AssetAttribute(id='application_license', value='Polyform Noncommercial License 1.0.0', type='Events', tag='Application.License'))
         gateway.add_attribute(AssetAttribute(id='application_version', value=os.environ.get('APPLICATION_VERSION'), type='Events', tag='Application.Version'))
 
-        logger.info(f"Registered new gateway {gateway_uuid} ({gateway_host})")
+        logger.info(f"Registered new gateway {gateway_id} ({gateway_host})")
+
+    else:
+        gateway_id = req.gateway_id
+
+    gateways_info[gateway_id] = {
+        "last_seen": time.time(),
+        "url": gateway_host,
+        "devices": set(req.devices.keys()) if req.devices else set(),
+    }
 
     return {
         "status": "registered",
-        "gateway_id": gateway_uuid,
-        "device_count": len(gateways_info[gateway_uuid]["devices"]),
-        "known_gateways": len(gateways_info),
+        "gateway_id": gateway_id,
     }
 
 
