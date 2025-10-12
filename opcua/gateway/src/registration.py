@@ -80,6 +80,7 @@ async def register_gateway(logger: logging.Logger, app: FastAPI) -> str:
 
         except httpx.RequestError as e:
             logger.warning(f"Coordinator not reachable ({COORDINATOR_URL}): {e}")
+            await asyncio.sleep(2)
         except httpx.HTTPStatusError as e:
             logger.warning(f"Coordinator returned HTTP error during registration: {e.response.status_code}")
         except Exception as e:
