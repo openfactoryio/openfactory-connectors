@@ -30,6 +30,7 @@ async def register_gateway(logger: logging.Logger, app: FastAPI) -> str:
 
     try:
         payload = {
+            "gateway_id": app.state.gateway_id,
             "gateway_host": g_host,
             "devices": {uuid: {} for uuid in _active_device_defs.keys()}
         }
