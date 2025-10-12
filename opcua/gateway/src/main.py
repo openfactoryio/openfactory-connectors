@@ -92,13 +92,13 @@ async def rebuild_gateway_state(logger: logging.Logger, gateway_id: str) -> None
 
             try:
                 cfg = json.loads(raw_config)
-                device = Device(**cfg["device"])
+                device = Device(**cfg)
                 _active_device_defs[dev_uuid] = device
                 logger.debug(f"Loaded device {dev_uuid} into gateway state.")
                 task = asyncio.create_task(monitor_device(device, logger))
                 _active_tasks[device.uuid] = task
             except Exception as e:
-                logger.warning(f"Failed to connect device {dev_uuid}: {e}")
+                logger.warning(f"Failed to connect device {dev_uuid}: {e}", exc_info=True)
 
         logger.info(f"✅ Restored {_active_device_defs.__len__()} devices for gateway {gateway_id}.")
 
