@@ -33,17 +33,17 @@ async def register_gateway(logger: logging.Logger, app: FastAPI) -> str:
             "gateway_host": g_host,
             "devices": {uuid: {} for uuid in _active_device_defs.keys()}
         }
-        response = await app.http_client.post(f"{COORDINATOR_URL}/register_gateway", json=payload)
+        response = await app.state.http_client.post(f"{COORDINATOR_URL}/register_gateway", json=payload)
         if response.status_code == 200:
             data = response.json()
             gateway_id = data.get("gateway_id")
-            app.gateway_id = gateway_id
+            app.state.gateway_id = gateway_id
             logger.info(f"✅ Gateway registered: {g_host} with ID {gateway_id}")
             return gateway_id
         else:
             logger.warning(f"Failed to register gateway {g_host}, status={response.status_code}")
     except Exception as e:
-        app.gateway_id = 'UNAVAILABLE'
+        app.state.gateway_id = 'UNAVAILABLE'
         logger.error(f"Error registering gateway {g_host}: {e}")
 
     return 'UNAVAILABLE'

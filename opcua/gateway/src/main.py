@@ -5,7 +5,7 @@ This module initializes the FastAPI app, sets up logging, includes
 API routes, and starts the Uvicorn server when run as a script.
 
 Key components:
-- `app`: FastAPI instance with attached logger (`app.logger`).
+- `app`: FastAPI instance with attached logger (`app.state.logger`).
 - API routes imported from the `api` module.
 - Logging configured via `setup_logging()` with level from config.
 - Runs Uvicorn server on `OPCUA_GATEWAY_PORT` when executed directly.
@@ -120,18 +120,18 @@ async def lifespan(app: FastAPI):
         None
     """
     # Register with coordinator
-    app.logger.info('Waiting for OPC UA Coordinator registration ...')
+    app.state.logger.info('Waiting for OPC UA Coordinator registration ...')
     try:
-        await register_gateway(app.logger, app)
-        app.logger.info(f'Registered Gateway as {app.gateway_id}')
+        await register_gateway(app.state.logger, app)
+        app.state.logger.info(f'Registered Gateway as {app.state.gateway_id}')
     except Exception as e:
-        app.logger.error(f"Failed to register gateway at startup: {e}")
+        app.state.logger.error(f"Failed to register gateway at startup: {e}")
 
     # Rebuild local in-memory state before starting anything ---
-    await rebuild_gateway_state(app.logger, app.gateway_id)
+    await rebuild_gateway_state(app.state.logger, app.state.gateway_id)
 
     # Start background task ---
-    task = asyncio.create_task(register_gateway_periodically(app.logger, app))
+    task = asyncio.create_task(register_gateway_periodically(app.state.logger, app))
 
     yield  # <-- control returns to FastAPI while the app is running
 
@@ -140,17 +140,17 @@ async def lifespan(app: FastAPI):
     try:
         await task
     except asyncio.CancelledError:
-        app.logger.info("Gateway registration task cancelled.")
-    await app.http_client.aclose()
+        app.state.logger.info("Gateway registration task cancelled.")
+    await app.state.http_client.aclose()
 
 
 ksql = KSQLDBClient(os.getenv("KSQLDB_URL"))
 app = FastAPI(title="OPCUA Gateway",
               version=os.environ.get('APPLICATION_VERSION'),
               lifespan=lifespan)
-app.logger = setup_logging(level=LOG_LEVEL)
-app.gateway_id = 'UNAVAILABLE'
-app.http_client = httpx.AsyncClient(timeout=10.0)
+app.state.logger = setup_logging(level=LOG_LEVEL)
+app.state.gateway_id = 'UNAVAILABLE'
+app.state.http_client = httpx.AsyncClient(timeout=10.0)
 app.include_router(api_router)
 
 
