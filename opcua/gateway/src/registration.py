@@ -67,7 +67,7 @@ async def register_gateway(logger: logging.Logger, app: FastAPI) -> str:
 
             if conflict:
                 logger.warning(
-                    f"⚠️ Gateway ID conflict: {gateway_id} already registered with a different host. Retrying..."
+                    f"⚠️ Gateway ID conflict: {gateway_id} already registered with a different Gateway. Retrying..."
                 )
                 app.state.gateway_id = "UNAVAILABLE"
                 await asyncio.sleep(2)
