@@ -7,19 +7,19 @@ logger = logging.getLogger(__name__)
 
 # Metrics definitions
 GATEWAY_DEVICE_COUNT = Gauge(
-    'gateway_devices_count',
-    'Number of devices currently assigned to a gateway',
+    'opcua_gateway_devices_count',
+    'Number of devices currently assigned to a OPCUA Gateway',
     ['gateway_id']
 )
 
 DEVICE_ASSIGNMENTS_TOTAL = Counter(
-    'device_assignments_total',
-    'Total number of devices assigned to gateways'
+    'opcua_device_assignments_total',
+    'Total number of devices assigned to OPCUA Gateways'
 )
 
 DEVICE_ASSIGNMENT_LATENCY = Histogram(
-    'device_assignment_latency_seconds',
-    'Time spent assigning a device to a gateway'
+    'opcua_device_assignment_latency_seconds',
+    'Time spent assigning a device to a OPCUA Gateway'
 )
 
 
