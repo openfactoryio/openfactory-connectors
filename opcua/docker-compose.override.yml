@@ -17,7 +17,10 @@ services:
       args:
         OPENFACTORY_VERSION: "main"
     image: openfactoryio/opcua-gateway
+    container_name: opcua-gateway
     restart: unless-stopped
+    deploy:
+      replicas: 1
 
   opcua-coordinator:
     build:
