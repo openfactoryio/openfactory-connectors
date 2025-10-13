@@ -174,7 +174,7 @@ class SubscriptionHandler:
                 value=message_text,
                 type="Condition",
                 tag=tag,
-                timestamp=openfactory_timestamp(event),
+                timestamp=openfactory_timestamp(device_timestamp),
             )
         )
         global_producer.flush()
