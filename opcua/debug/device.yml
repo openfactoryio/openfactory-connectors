@@ -15,6 +15,10 @@ devices:
       server:
         uri: opc.tcp://${CONTAINER_IP}:4840/freeopcuas/server/
         namespace_uri: http://examples.openfactory.local/opcua
+        subscription:
+          publishing_interval: 10           # ms, for subscription object
+          queue_size: 1                     # default per monitored item
+          sampling_interval: 0              # ms, 0 = event-driven
 
       device:
         path: Sensors/TemperatureSensor1
@@ -39,6 +43,10 @@ devices:
       server:
         uri: opc.tcp://${CONTAINER_IP}:4840/freeopcuas/server/
         namespace_uri: http://examples.openfactory.local/opcua
+        subscription:
+          publishing_interval: 10           # ms, for subscription object
+          queue_size: 1                     # default per monitored item
+          sampling_interval: 0              # ms, 0 = event-driven
 
       device:
         path: Sensors/TemperatureSensor2
