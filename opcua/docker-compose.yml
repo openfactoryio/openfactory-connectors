@@ -47,6 +47,8 @@ services:
       - OPCUA_GATEWAY_LOG_LEVEL=${OPCUA_GATEWAY_LOG_LEVEL:-INFO}
     networks:
       - factory-net
+    deploy:
+      replicas: 3
 
   opcua-coordinator:
     image: ghcr.io/openfactoryio/opcua-coordinator

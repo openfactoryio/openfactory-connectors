@@ -17,9 +17,6 @@ services:
       args:
         OPENFACTORY_VERSION: "main"
     image: openfactoryio/opcua-gateway
-    container_name: opcua-gateway
-    ports:
-      - "8001:8001"
     restart: unless-stopped
 
   opcua-coordinator:
