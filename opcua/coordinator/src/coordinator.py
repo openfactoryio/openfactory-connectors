@@ -6,7 +6,7 @@ import httpx
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import TypedDict, Dict, Set
+from typing import Dict
 from confluent_kafka import Producer
 
 from openfactory.kafka import KSQLDBClient
@@ -23,20 +23,6 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("opcua-coordinator")
-
-
-# ----------------------------
-# In-memory store
-# ----------------------------
-class GatewayInfo(TypedDict):
-    last_seen: float
-    url: str
-    devices: Set[str]
-
-
-# gateway_info -> {"last_seen": float, "devices": set[str]}
-# dict key is the OPC UA Gateway UUID, (OPCUA-GATEWAY-1, OPCUA-GATEWAY-2, ...)
-gateways_info: Dict[str, GatewayInfo] = {}
 
 
 # ----------------------------
@@ -96,6 +82,42 @@ async def deregister_asset_async(asset_uuid: str):
     """
     async with thread_semaphore:
         await asyncio.to_thread(deregister_asset, asset_uuid, ksqlClient=ksql)
+
+
+async def fetch_devices_count(client, gw_id, gw_host):
+    """
+    Asynchronously fetch the number of registered devices from a gateway.
+
+    This coroutine queries a gateway's `/devices_count` endpoint using an
+    asynchronous HTTP client. It limits concurrent requests via a global
+    semaphore to prevent excessive parallel connections. If the gateway
+    is unreachable or returns an error, it is treated as "busy" by assigning
+    an infinite device count (`float('inf')`).
+
+    Args:
+        client (httpx.AsyncClient): The HTTP client instance used for making the request.
+        gw_id (str): The unique identifier of the gateway (e.g., "OPCUA-GATEWAY-1").
+        gw_host (str): The base URL of the gateway (e.g., "http://172.19.0.6:8001").
+
+    Returns:
+        tuple: A tuple containing:
+            - The gateway ID (`gw_id`).
+            - A dictionary with:
+                - "host" (str): The gateway's host URL.
+                - "devices_count" (int or float): The number of registered devices,
+                  or `float('inf')` if the gateway is unreachable.
+    """
+    async with thread_semaphore:
+        url = f"{gw_host}/devices_count"
+        try:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            count = resp.json()
+            return gw_id, {"host": gw_host, "devices_count": count}
+        except Exception as e:
+            logger.warning(f"Failed to get devices_count from {gw_id} ({gw_host}): {e}")
+            # Treat as "busy" if unreachable
+            return gw_id, {"host": gw_host, "devices_count": float('inf')}
 
 
 async def _cleanup_expired_gateways():
@@ -166,6 +188,31 @@ async def create_opcua_assignment_tables():
         FROM OPCUA_GATEWAYS_SOURCE
         EMIT CHANGES;
     """)
+
+
+async def get_assigned_gateway_url(device_uuid: str) -> str:
+    """
+    Return the Gateway host to which a device is assigned.
+
+    Args:
+        device_uuid (str): Device UUID to look up.
+
+    Returns:
+        str: Gateway host to which a device is assigned.
+    """
+    rows = ksql.query(
+        f"SELECT GATEWAY_ID FROM OPCUA_DEVICE_ASSIGNMENT WHERE DEVICE_UUID='{device_uuid}';"
+        )
+    if not rows:
+        return None
+
+    rows = ksql.query(
+        f"SELECT GATEWAY_HOST FROM OPCUA_GATEWAYS WHERE GATEWAY_ID='{rows[0]["GATEWAY_ID"]}';"
+        )
+    if not rows:
+        return None
+    else:
+        return rows[0]["GATEWAY_HOST"]
 
 
 async def assign_gateway_id() -> str:
@@ -365,12 +412,6 @@ async def register_gateway(req: RegisterGatewayRequest):
         else:
             gateway_id = req.gateway_id
 
-        gateways_info[gateway_id] = {
-            "last_seen": time.time(),
-            "url": gateway_host,
-            "devices": set(req.devices.keys()) if req.devices else set(),
-        }
-
         return {
             "status": "registered",
             "gateway_id": gateway_id,
@@ -396,18 +437,35 @@ async def register_device(req: RegisterDeviceRequest):
             - "device_uuid": UUID of the registered device
             - "assigned_gateway": Host URL of the assigned gateway
     """
-    if not gateways_info:
-        raise HTTPException(status_code=500, detail="No gateways registered")
-
     device_uuid = req.device.uuid
 
-    # Round-robin assignment based on least devices
-    assigned_gateway = min(gateways_info.items(), key=lambda x: len(x[1]["devices"]))[0]
-    gateways_info[assigned_gateway]["devices"].add(device_uuid)
-    logger.info(f"Device {device_uuid} assigned to {assigned_gateway}")
+    # Query deployed gateways from KSQL
+    try:
+        gateways_rows = ksql.query("SELECT GATEWAY_ID, GATEWAY_HOST FROM OPCUA_GATEWAYS;")
+    except Exception as e:
+        logger.error(f"Failed to query OPCUA_GATEWAYS table: {e}")
+        gateways_rows = []
+
+    gateways = {row["GATEWAY_ID"]: row["GATEWAY_HOST"] for row in gateways_rows}
+
+    if not gateways:
+        raise HTTPException(status_code=500, detail="No gateways registered")
+
+    # Query each gateway’s /devices_count endpoint concurrently
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        tasks = [fetch_devices_count(client, gw_id, gw_host) for gw_id, gw_host in gateways.items()]
+        responses = await asyncio.gather(*tasks)
+    results = dict(responses)
+
+    # Pick the gateway with the fewest registered devices
+    assigned_gateway_id, assigned_info = min(
+        results.items(), key=lambda x: x[1]["devices_count"]
+    )
+    assigned_gateway_host = assigned_info["host"]
+    logger.info(f"Device {device_uuid} assigned to {assigned_gateway_id} ({assigned_gateway_host})")
 
     async def notify_gateway():
-        url = f"{gateways_info[assigned_gateway]["url"]}/add_device"
+        url = f"{assigned_gateway_host}/add_device"
         payload = {"device": req.device.model_dump()}
         try:
             async with httpx.AsyncClient() as client:
@@ -427,9 +485,9 @@ async def register_device(req: RegisterDeviceRequest):
                 await asyncio.to_thread(
                     ksql.insert_into_stream,
                     "OPCUA_DEVICE_ASSIGNMENT_SOURCE",
-                    [{"DEVICE_UUID": device_uuid, "GATEWAY_ID": assigned_gateway}]
+                    [{"DEVICE_UUID": device_uuid, "GATEWAY_ID": assigned_gateway_id}]
                 )
-                logger.info(f"Recorded assignment of device {device_uuid} to gateway {assigned_gateway} in KSQLDB")
+                logger.info(f"Recorded assignment of device {device_uuid} to gateway {assigned_gateway_id} in KSQLDB")
             except Exception as e:
                 logger.error(f"Failed to record assignment of {device_uuid} in KSQLDB: {e}")
 
@@ -443,7 +501,7 @@ async def register_device(req: RegisterDeviceRequest):
                 producer = await create_asset_async(device_uuid.upper() + '-PRODUCER')
                 producer.add_attribute(AssetAttribute(
                     id='opcua-gateway',
-                    value=assigned_gateway,
+                    value=assigned_gateway_id,
                     type='Events',
                     tag='ProducerURI'
                 ))
@@ -456,7 +514,7 @@ async def register_device(req: RegisterDeviceRequest):
         tg.create_task(register_producer_safe())
         tg.create_task(persist_assignment())
 
-    return {"device_uuid": device_uuid, "assigned_gateway": assigned_gateway}
+    return {"device_uuid": device_uuid, "assigned_gateway": assigned_gateway_id}
 
 
 @app.delete("/unregister_device/{device_uuid}")
@@ -465,26 +523,21 @@ async def unregister_device(device_uuid: str):
     Unregister a device from all gateways where it may exist.
     """
     # Find the gateway containing this device
-    assigned_gateway = None
-    for gw, info in gateways_info.items():
-        if device_uuid in info["devices"]:
-            assigned_gateway = gw
-            info["devices"].remove(device_uuid)
-            break
+    assigned_gateway = await get_assigned_gateway_url(device_uuid)
 
     if not assigned_gateway:
         raise HTTPException(status_code=404, detail=f"Device {device_uuid} not found")
 
     async def notify_remove():
         """ Deregister device with Gateway. """
-        url = f"{gateways_info[assigned_gateway]["url"]}/remove_device/{device_uuid}"
+        url = f"{assigned_gateway}/remove_device/{device_uuid}"
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.delete(url, timeout=5)
                 resp.raise_for_status()
                 logger.info(f"✅ Gateway notified to remove {device_uuid}: {url} response={resp.status_code}")
         except Exception as e:
-            logger.error(f"❌ Failed to notify {assigned_gateway} for {device_uuid}: {e}")
+            logger.error(f"❌ Failed to remove {device_uuid} on {assigned_gateway}: {e}")
 
     async def deregister_device():
         """
@@ -539,7 +592,15 @@ async def get_assignments():
     Returns:
         Dict[str, str]: A dictionary mapping device UUIDs to assigned gateway hosts.
     """
-    return {dev: gw for gw, info in gateways_info.items() for dev in info["devices"]}
+    rows = ksql.query("SELECT DEVICE_UUID, GATEWAY_ID FROM OPCUA_DEVICE_ASSIGNMENT;")
+    gateways = [
+        {
+            "device_uuid": row["DEVICE_UUID"],
+            "gateway_id": row["GATEWAY_ID"]
+        }
+        for row in rows
+    ]
+    return gateways
 
 
 @app.get("/gateways")
@@ -548,12 +609,20 @@ async def get_gateways():
     Retrieve the list of all registered gateways.
 
     Returns:
-        List[str]: A list of gateway host URLs currently registered with the coordinator.
+        List[Dict]: A list of gateway dictionaries, each containing:
+            - gateway_id (str): The unique identifier of the gateway.
+            - gateway_host (str): The host URL where the gateway is accessible.
+
     """
-    return {
-        gateway: {"device_count": len(info["devices"]), "last_seen": info["last_seen"]}
-        for gateway, info in gateways_info.items()
-    }
+    rows = ksql.query("SELECT GATEWAY_ID, GATEWAY_HOST FROM OPCUA_GATEWAYS;")
+    gateways = [
+        {
+            "gateway_id": row["GATEWAY_ID"],
+            "gateway_host": row["GATEWAY_HOST"]
+        }
+        for row in rows
+    ]
+    return gateways
 
 
 # ----------------------------
