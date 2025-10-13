@@ -67,7 +67,7 @@ async def register_gateway(logger: logging.Logger, app: FastAPI) -> str:
 
             if conflict:
                 logger.warning(
-                    f"⚠️ Gateway ID conflict: {gateway_id} already registered with a different Gateway. Retrying..."
+                    f"⚠️  Gateway ID conflict: {gateway_id} already registered with a different Gateway. Retrying..."
                 )
                 app.state.gateway_id = "UNAVAILABLE"
                 await asyncio.sleep(2)
@@ -89,27 +89,3 @@ async def register_gateway(logger: logging.Logger, app: FastAPI) -> str:
         # Retry logic
         app.state.gateway_id = "UNAVAILABLE"
         await asyncio.sleep(5)
-
-
-async def register_gateway_periodically(logger: logging.Logger, app: FastAPI) -> None:
-    """
-    Periodically register (or re-register) this gateway with the coordinator.
-    This coroutine continuously sends the gateway's URL to the coordinator
-    at fixed intervals defined by `GATEWAY_RETRY_INTERVAL`. It logs
-    successes at the DEBUG level, warnings for non-200 responses, and errors
-    for exceptions during the HTTP request.
-
-    Args:
-        logger (logging.Logger): Logger instance to record registration events.
-        app (FastAPI): current application
-
-    Raises:
-        None: Exceptions are caught and logged internally.
-    """
-    while True:
-        try:
-            await register_gateway(logger, app)
-        except Exception as e:
-            logger.error(f"Error during periodic gateway registration: {e}")
-        finally:
-            await asyncio.sleep(GATEWAY_RETRY_INTERVAL)

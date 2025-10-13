@@ -25,7 +25,7 @@ from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from openfactory.kafka import KSQLDBClient
 from openfactory.schemas.devices import Device
-from .registration import register_gateway_periodically, register_gateway
+from .registration import register_gateway
 from .api import router as api_router
 from .utils import setup_logging
 from .config import OPCUA_GATEWAY_PORT, LOG_LEVEL
@@ -130,18 +130,9 @@ async def lifespan(app: FastAPI):
     # Rebuild local in-memory state before starting anything ---
     await rebuild_gateway_state(app.state.logger, app.state.gateway_id)
 
-    # Start background task ---
-    task = asyncio.create_task(register_gateway_periodically(app.state.logger, app))
-
     yield  # <-- control returns to FastAPI while the app is running
 
     # App shutdown logic
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        app.state.logger.info("Gateway registration task cancelled.")
-    await app.state.http_client.aclose()
 
 
 app = FastAPI(title="OPCUA Gateway",
