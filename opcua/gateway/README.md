@@ -102,7 +102,7 @@ It is responsible for:
 | ------------------------- | --------------------------------- | ------------------------- |
 | `KAFKA_BROKER`            | Kafka bootstrap server address    | Required                  |
 | `KSQLDB_URL`              | ksqlDB server URL                 | Required                  |
-| `OPCUA_GATEWAY_PORT`      | Port for FastAPI/Uvicorn server   | Optional (default: 8001)  |
+| `OPCUA_GATEWAY_PORT`      | Port for FastAPI/Uvicorn server   | Optional (default: 8000)  |
 | `OPCUA_GATEWAY_LOG_LEVEL` | Logging level (DEBUG, INFO, etc.) | Optional (default: DEBUG) |
 
 ## Local Development
@@ -127,7 +127,7 @@ export KSQLDB_URL=your_ksqldb_url
 python -m opcua.gateway.src.gateway
 ```
 
-5. The API will be available at `http://localhost:8001` (or your configured port).
+5. The API will be available at `http://localhost:8000` (or your configured port).
 
 
 ## Deployment
@@ -136,7 +136,7 @@ python -m opcua.gateway.src.gateway
 
 ```bash
 docker build -t opcua-gateway ./gateway
-docker run -p 8001:8001 \
+docker run -p 8000:8000 \
   -e KAFKA_BROKER=your_kafka_address \
   -e KSQLDB_URL=your_ksqldb_url \
   opcua-gateway

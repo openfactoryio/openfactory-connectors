@@ -28,7 +28,7 @@ This README covers usage for both **developers** and **end users**.
 3. The coordinator maintains an in-memory mapping of `device_uuid -> gateway`.
 4. Gateways are notified when devices are added or removed.
 
-For local development, a default gateway (`http://localhost:8001`) can be automatically added by setting the environment variable `COORDINATOR_LOCAL_DEV=1`.
+For local development, a default gateway (`http://localhost:8000`) can be automatically added by setting the environment variable `COORDINATOR_LOCAL_DEV=1`.
 
 ## API Endpoints
 
@@ -39,7 +39,7 @@ For local development, a default gateway (`http://localhost:8001`) can be automa
 
 ```json
 {
-  "gateway_host": "http://gateway-host:8001"
+  "gateway_host": "http://gateway-host:8000"
 }
 ```
 
@@ -48,7 +48,7 @@ For local development, a default gateway (`http://localhost:8001`) can be automa
 ```json
 {
   "status": "registered",
-  "gateway_host": "http://gateway-host:8001"
+  "gateway_host": "http://gateway-host:8000"
 }
 ```
 
@@ -68,7 +68,7 @@ For local development, a default gateway (`http://localhost:8001`) can be automa
 ```json
 {
   "device_uuid": "device-123",
-  "assigned_gateway": "http://gateway-host:8001"
+  "assigned_gateway": "http://gateway-host:8000"
 }
 ```
 
@@ -86,7 +86,7 @@ For local development, a default gateway (`http://localhost:8001`) can be automa
 {
   "status": "unregistered",
   "device_uuid": "device-123",
-  "gateway": "http://gateway-host:8001"
+  "gateway": "http://gateway-host:8000"
 }
 ```
 
@@ -97,8 +97,8 @@ For local development, a default gateway (`http://localhost:8001`) can be automa
 
 ```json
 {
-  "device-123": "http://gateway-1:8001",
-  "device-456": "http://gateway-2:8001"
+  "device-123": "http://gateway-1:8000",
+  "device-456": "http://gateway-2:8000"
 }
 ```
 
@@ -109,8 +109,8 @@ For local development, a default gateway (`http://localhost:8001`) can be automa
 
 ```json
 [
-  "http://gateway-1:8001",
-  "http://gateway-2:8001"
+  "http://gateway-1:8000",
+  "http://gateway-2:8000"
 ]
 ```
 
@@ -120,7 +120,7 @@ For local development, a default gateway (`http://localhost:8001`) can be automa
 
 1. Clone the repository.
 
-2. Enable local development mode (adds default gateway `http://localhost:8001`):
+2. Enable local development mode (adds default gateway `http://localhost:8000`):
 
 ```bash
 export COORDINATOR_LOCAL_DEV=1
@@ -140,7 +140,7 @@ python -m opcua.coordinator.src.coordinator
 | ----------------------- | ------------------------------------------------------------------------------------- | ------------------- |
 | `KAFKA_BROKER`          | Kafka bootstrap server address                                                        | Required            |
 | `KSQLDB_URL`            | ksqlDB URL                                                                            | Required            |
-| `COORDINATOR_LOCAL_DEV` | If set to `1`, adds a default local gateway (`http://localhost:8001`) for development | Optional            |
+| `COORDINATOR_LOCAL_DEV` | If set to `1`, adds a default local gateway (`http://localhost:8000`) for development | Optional            |
 
 ## Deployment
 

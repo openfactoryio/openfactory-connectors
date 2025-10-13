@@ -16,7 +16,7 @@ from openfactory.schemas.devices import get_devices_from_config_file
 # ----------------------------
 uns_config = "uns.yml"
 yaml_file = "device.yml"
-gateway_url = "http://localhost:8001"
+gateway_url = "http://localhost:8000"
 
 # ----------------------------
 # Load & validate devices

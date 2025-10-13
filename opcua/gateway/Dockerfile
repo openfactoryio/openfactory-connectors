@@ -58,7 +58,7 @@ ENV OPENFACTORY_VERSION=${OPENFACTORY_VERSION}
 USER $UNAME
 
 # Expose the port your app runs on
-EXPOSE 8001
+EXPOSE 8000
 
 # Command to run the app with uvicorn
 CMD ["./entrypoint.sh"]

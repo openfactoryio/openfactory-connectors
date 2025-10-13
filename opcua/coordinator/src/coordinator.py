@@ -98,7 +98,7 @@ async def fetch_devices_count(client, gw_id, gw_host):
     Args:
         client (httpx.AsyncClient): The HTTP client instance used for making the request.
         gw_id (str): The unique identifier of the gateway (e.g., "OPCUA-GATEWAY-1").
-        gw_host (str): The base URL of the gateway (e.g., "http://172.19.0.6:8001").
+        gw_host (str): The base URL of the gateway (e.g., "http://172.19.0.6:8000").
 
     Returns:
         tuple: A tuple containing:
@@ -286,7 +286,7 @@ async def lifespan(app: FastAPI):
     Lifespan context manager for the FastAPI application.
 
     This function runs at application startup and shutdown. In local development,
-    it automatically registers a default gateway ("http://localhost:8001") if
+    it automatically registers a default gateway ("http://localhost:8000") if
     the `COORDINATOR_LOCAL_DEV` environment variable is set to "1".
 
     Args:
