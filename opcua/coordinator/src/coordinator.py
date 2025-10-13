@@ -1,6 +1,5 @@
 import os
 import logging
-import time
 import asyncio
 import httpx
 from contextlib import asynccontextmanager
@@ -118,36 +117,6 @@ async def fetch_devices_count(client, gw_id, gw_host):
             logger.warning(f"Failed to get devices_count from {gw_id} ({gw_host}): {e}")
             # Treat as "busy" if unreachable
             return gw_id, {"host": gw_host, "devices_count": float('inf')}
-
-
-async def _cleanup_expired_gateways():
-    """
-    Remove gateways that haven't re-registered within GATEWAY_TIMEOUT seconds.
-    Also deregister all devices that belonged to that gateway, in batches for safety.
-    """
-    GATEWAY_TIMEOUT = 60
-    BATCH_SIZE = 50  # Limit number of tasks scheduled at once
-    try:
-        while True:
-            now = time.time()
-            for g_id, info in list(gateways_info.items()):
-                if now - info["last_seen"] > GATEWAY_TIMEOUT:
-                    logger.warning(f"Gateway {g_id} timed out, removing.")
-
-                    devices = list(info["devices"])
-                    for i in range(0, len(devices), BATCH_SIZE):
-                        batch = devices[i:i + BATCH_SIZE]
-                        async with asyncio.TaskGroup() as tg:
-                            for dev_uuid in batch:
-                                tg.create_task(deregister_asset_async(dev_uuid))
-                                tg.create_task(deregister_asset_async(dev_uuid + '-PRODUCER'))
-                    del gateways_info[g_id]
-            await asyncio.sleep(10)
-    except asyncio.CancelledError:
-        logger.info("Cleanup task cancelled gracefully")
-        # Optionally do final cleanup here
-
-        raise  # Re-raise to properly signal cancellation
 
 
 # ----------------------------
@@ -313,10 +282,6 @@ async def lifespan(app: FastAPI):
         AssetAttribute(id='application_version', value=os.environ.get('APPLICATION_VERSION'), type='Events', tag='Application.Version')
     )
 
-    # Start cleanup coroutine
-    logger.info("Start Gateways cleanup task.")
-    cleanup_task = asyncio.create_task(_cleanup_expired_gateways())
-
     try:
         # Yield control to FastAPI
         yield
@@ -329,13 +294,6 @@ async def lifespan(app: FastAPI):
             logger.info("Coordinator marked UNAVAILABLE")
         except Exception as e:
             logger.error(f"Failed to mark coordinator UNAVAILABLE: {e}")
-
-        # Cancel and await cleanup task
-        cleanup_task.cancel()
-        try:
-            await cleanup_task
-        except asyncio.CancelledError:
-            logger.info("Cleanup task cancelled on shutdown")
 
 
 # ----------------------------
