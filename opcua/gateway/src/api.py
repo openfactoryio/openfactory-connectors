@@ -84,6 +84,17 @@ async def remove_device(device_uuid: str) -> Dict[str, str]:
     return {"status": "removed", "device_uuid": device_uuid}
 
 
+@router.get("/devices_count")
+async def count_devices() -> int:
+    """
+    Retrieve the number of currently registered devices.
+
+    Returns:
+        int: number of currently registered devices.
+    """
+    return len(_active_device_defs)
+
+
 @router.get("/devices")
 async def list_devices() -> Dict[str, Dict[str, Any]]:
     """
