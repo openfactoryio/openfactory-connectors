@@ -7,6 +7,7 @@ dependencies = [
     "OpenFactory @ git+https://github.com/openfactoryio/openfactory-core.git@v0.4.3",
     "fastapi",
     "uvicorn",
+    "prometheus-client",
 ]
 
 [project.optional-dependencies]
