@@ -1,7 +1,3 @@
-Perfect! We can update the guide so the Docker Compose section clearly emphasizes **using Docker Compose “the whole way”** instead of manually copying files. Here’s the revised version:
-
----
-
 # OpenFactory OPCUA Connector – Prometheus Integration Guide
 
 This guide explains how to integrate the OPCUA connector metrics into Prometheus using the **provided files**, either by adding them to an **existing Prometheus setup** or by using the **provided Docker Compose project**.
