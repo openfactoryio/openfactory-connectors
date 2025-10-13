@@ -299,6 +299,7 @@ app = FastAPI(title="OPCUA Coordinator",
               lifespan=lifespan)
 ksql = KSQLDBClient(os.getenv("KSQLDB_URL"))
 kafka_producer = Producer({'bootstrap.servers': os.getenv("KAFKA_BROKER")})
+gateway_register_lock = asyncio.Lock()
 
 
 # ----------------------------
@@ -330,49 +331,50 @@ async def register_gateway(req: RegisterGatewayRequest):
             - "status" (str): Registration status.
             - "gateway_id" (str): The assigned gateway ID.
     """
-    gateway_host = req.gateway_host
+    async with gateway_register_lock:
+        gateway_host = req.gateway_host
 
-    if req.gateway_id == 'UNAVAILABLE':
+        if req.gateway_id == 'UNAVAILABLE':
 
-        logger.info("Assigning Gateway ID")
-        gateway_id = await assign_gateway_id()
-        logger.info(f"Assigned {gateway_id}")
+            logger.info("Assigning Gateway ID")
+            gateway_id = await assign_gateway_id()
+            logger.info(f"Assigned {gateway_id}")
 
-        # Register Gateway in KSQLDB
-        try:
-            sql = f"""
-            INSERT INTO OPCUA_GATEWAYS_SOURCE (GATEWAY_ID, GATEWAY_HOST)
-            VALUES ('{gateway_id}', '{gateway_host}');
-            """
-            ksql.statement_query(sql)
-            logger.info(f"Registered gateway {gateway_id} in KSQLDB with host {gateway_host}")
-        except Exception as e:
-            logger.error(f"Failed to register gateway {gateway_id} in KSQLDB: {e}")
+            # Register Gateway in KSQLDB
+            try:
+                sql = f"""
+                INSERT INTO OPCUA_GATEWAYS_SOURCE (GATEWAY_ID, GATEWAY_HOST)
+                VALUES ('{gateway_id}', '{gateway_host}');
+                """
+                ksql.statement_query(sql)
+                logger.info(f"Registered gateway {gateway_id} in KSQLDB with host {gateway_host}")
+            except Exception as e:
+                logger.error(f"Failed to register gateway {gateway_id} in KSQLDB: {e}")
 
-        # Register Gateway attributes
-        coordinator.add_reference_below(gateway_id)
-        gateway = await create_asset_async(gateway_id)
-        gateway.add_attribute(AssetAttribute(id='avail', value="AVAILABLE", tag="Availability", type="Events"))
-        gateway.add_attribute(AssetAttribute(id='uri', value=gateway_host, tag="GatewayURI", type="Events"))
-        gateway.add_attribute(AssetAttribute(id='application_manufacturer', value='OpenFactoryIO', type='Events', tag='Application.Manufacturer'))
-        gateway.add_attribute(AssetAttribute(id='application_license', value='Polyform Noncommercial License 1.0.0', type='Events', tag='Application.License'))
-        gateway.add_attribute(AssetAttribute(id='application_version', value=os.environ.get('APPLICATION_VERSION'), type='Events', tag='Application.Version'))
+            # Register Gateway attributes
+            coordinator.add_reference_below(gateway_id)
+            gateway = await create_asset_async(gateway_id)
+            gateway.add_attribute(AssetAttribute(id='avail', value="AVAILABLE", tag="Availability", type="Events"))
+            gateway.add_attribute(AssetAttribute(id='uri', value=gateway_host, tag="GatewayURI", type="Events"))
+            gateway.add_attribute(AssetAttribute(id='application_manufacturer', value='OpenFactoryIO', type='Events', tag='Application.Manufacturer'))
+            gateway.add_attribute(AssetAttribute(id='application_license', value='Polyform Noncommercial License 1.0.0', type='Events', tag='Application.License'))
+            gateway.add_attribute(AssetAttribute(id='application_version', value=os.environ.get('APPLICATION_VERSION'), type='Events', tag='Application.Version'))
 
-        logger.info(f"Registered new gateway {gateway_id} ({gateway_host})")
+            logger.info(f"✅ Registered new gateway {gateway_id} ({gateway_host})")
 
-    else:
-        gateway_id = req.gateway_id
+        else:
+            gateway_id = req.gateway_id
 
-    gateways_info[gateway_id] = {
-        "last_seen": time.time(),
-        "url": gateway_host,
-        "devices": set(req.devices.keys()) if req.devices else set(),
-    }
+        gateways_info[gateway_id] = {
+            "last_seen": time.time(),
+            "url": gateway_host,
+            "devices": set(req.devices.keys()) if req.devices else set(),
+        }
 
-    return {
-        "status": "registered",
-        "gateway_id": gateway_id,
-    }
+        return {
+            "status": "registered",
+            "gateway_id": gateway_id,
+        }
 
 
 @app.post("/register_device")
