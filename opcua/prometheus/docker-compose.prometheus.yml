@@ -1,0 +1,17 @@
+services:
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./opcua_connector_rules.yml:/etc/prometheus/opcua_connector_rules.yml
+      - ./opcua_connector_scrape.yml:/etc/prometheus/opcua_connector_scrape.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - factory-net
+
+networks:
+  factory-net:
+    external: true

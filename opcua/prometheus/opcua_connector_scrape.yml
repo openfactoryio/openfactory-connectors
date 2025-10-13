@@ -1,0 +1,36 @@
+# ----------------------------------------------------------------------------------
+# Prometheus scrape targets for the OpenFactory OPCUA Connector
+#
+# Purpose:
+#   This file contains the scrape targets for OPCUA Coordinator and Gateway components.
+#   Users can drop this file into their Prometheus setup and reference it under
+#   the scrape_configs section.
+#
+# How to use:
+#   In prometheus.yml, include it with file_sd_configs:
+#
+#   scrape_configs:
+#     - job_name: "opcua_connector"
+#       file_sd_configs:
+#         - files:
+#             - "opcua_connector_scrape.yml"
+#
+# Notes:
+#   - Each block under "targets:" defines one or more scrape targets.
+#   - Labels defined here (component, role) will be attached to all metrics
+#     scraped from the target.
+# ----------------------------------------------------------------------------------
+
+
+# List of scrape targets for the coordinator and gateways
+- targets:
+    - "opcua-coordinator:8000"
+  labels:
+    component: "opcua_connector"
+    role: "coordinator"
+
+- targets:
+    - "opcua-gateway:8000"
+  labels:
+    component: "opcua_connector"
+    role: "gateway"

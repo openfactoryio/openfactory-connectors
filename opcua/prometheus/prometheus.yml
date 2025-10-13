@@ -1,0 +1,14 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Include rules
+rule_files:
+  - "opcua_connector_rules.yml"
+
+# Include component-specific scrape configs
+scrape_configs:
+  - job_name: "opcua_connector"
+    file_sd_configs:
+      - files:
+          - "opcua_connector_scrape.yml"
