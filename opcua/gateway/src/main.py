@@ -31,6 +31,7 @@ from .utils import setup_logging
 from .config import OPCUA_GATEWAY_PORT, LOG_LEVEL
 from .state import _active_device_defs, _active_tasks
 from .monitor import monitor_device
+from .gateway_metrics import metrics_endpoint
 
 
 async def rebuild_gateway_state(logger: logging.Logger, gateway_id: str) -> None:
@@ -142,6 +143,11 @@ app.state.logger = setup_logging(level=LOG_LEVEL)
 app.state.gateway_id = 'UNAVAILABLE'
 app.state.ksql = KSQLDBClient(os.getenv("KSQLDB_URL"))
 app.state.http_client = httpx.AsyncClient(timeout=10.0)
+
+# Expose Prometheus metrics
+app.get("/metrics")(metrics_endpoint)
+
+# Endpoints router
 app.include_router(api_router)
 
 

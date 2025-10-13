@@ -14,8 +14,8 @@ Functions:
 
 import logging
 from typing import Any
-from openfactory.assets.utils import openfactory_timestamp, current_timestamp
 from asyncua import ua
+from datetime import datetime, timezone
 
 
 def setup_logging(name: str = "opcua.gateway", level: str = "DEBUG") -> logging.Logger:
@@ -40,7 +40,7 @@ def setup_logging(name: str = "opcua.gateway", level: str = "DEBUG") -> logging.
     return logger
 
 
-def opcua_data_timestamp(data: ua.DataValue) -> str:
+def opcua_data_timestamp(data: ua.DataValue) -> datetime:
     """
     Extract the most relevant timestamp from an OPC UA DataValue.
 
@@ -53,16 +53,16 @@ def opcua_data_timestamp(data: ua.DataValue) -> str:
         data (ua.DataValue): The OPC UA DataValue to extract timestamps from.
 
     Returns:
-        str: OpenFactory-formatted timestamp string.
+        datetime: The extracted timestamp as a UTC-aware datetime object.
     """
     if data.SourceTimestamp:
-        return openfactory_timestamp(data.SourceTimestamp)
+        return data.SourceTimestamp
     if data.ServerTimestamp:
-        return openfactory_timestamp(data.ServerTimestamp)
-    return current_timestamp()
+        return data.ServerTimestamp
+    return datetime.now(timezone.utc)
 
 
-def opcua_event_timestamp(event: Any) -> str:
+def opcua_event_timestamp(event: Any) -> datetime:
     """
     Extract the most relevant timestamp from an OPC UA event.
 
@@ -75,12 +75,12 @@ def opcua_event_timestamp(event: Any) -> str:
         event (Any): OPC UA event object.
 
     Returns:
-        str: OpenFactory-formatted timestamp string.
+        datetime: The extracted timestamp as a UTC-aware datetime object.
     """
     event_time = getattr(event, "Time", None)
     receive_time = getattr(event, "ReceiveTime", None)
     if hasattr(event_time, "isoformat"):
-        return openfactory_timestamp(event_time)
+        return event_time
     if hasattr(receive_time, "isoformat"):
-        return openfactory_timestamp(receive_time)
-    return current_timestamp()
+        return receive_time
+    return datetime.now(timezone.utc)

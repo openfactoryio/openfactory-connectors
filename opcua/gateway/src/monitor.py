@@ -39,15 +39,18 @@ class DeviceMonitor:
     - Handling reconnects and cleanup
     """
 
-    def __init__(self, device: Device, logger: logging.Logger):
+    def __init__(self, device: Device, logger: logging.Logger, gateway_id: str):
         """
         Initialize monitoring of a given device.
 
         Args:
             device (Device): The device definition, including UUID and connector schema.
+            logger (logging.Logger): Logger instance for debug and error messages.
+            gateway_id (str): Gateway ID
         """
         self.device = device
         self.dev_uuid = device.uuid
+        self.gateway_id = gateway_id
         self.schema = OPCUAConnectorSchema(**device.connector.model_dump())
         self.sub = None
 
@@ -136,7 +139,7 @@ class DeviceMonitor:
             idx = await self._resolve_namespace(client)
             device_node = await self._resolve_device_node(client, idx)
 
-            handler = SubscriptionHandler(self.dev_uuid, self.log)
+            handler = SubscriptionHandler(self.dev_uuid, self.log, self.gateway_id)
             self.sub = await client.create_subscription(
                 period=float(self.schema.server.subscription.publishing_interval),
                 handler=handler,
@@ -274,7 +277,7 @@ class DeviceMonitor:
         self.log.info(f"[{self.dev_uuid}] OPC UA connector removed succesfully")
 
 
-async def monitor_device(device: Device, logger):
+async def monitor_device(device: Device, logger, gateway_id: str):
     """
     Run subscription loop for a single device.
 
@@ -282,9 +285,11 @@ async def monitor_device(device: Device, logger):
 
     Args:
         device (Device): Device schema instance defining OPC UA connector settings.
+        logger (logging.Logger): Logger instance for debug and error messages.
+        gateway_id (str): Gateway ID
 
     Returns:
         None
     """
-    monitor = DeviceMonitor(device, logger)
+    monitor = DeviceMonitor(device, logger, gateway_id)
     await monitor.run()

@@ -53,7 +53,7 @@ async def add_device(req: AddDeviceRequest, request: Request) -> Dict[str, str]:
     device = req.device
     if device.uuid in _active_tasks:
         raise HTTPException(status_code=400, detail=f"Device {device.uuid} already added")
-    task = asyncio.create_task(monitor_device(device, logger))
+    task = asyncio.create_task(monitor_device(device, logger, request.app.state.gateway_id))
     _active_tasks[device.uuid] = task
     return {"status": "started", "device_uuid": device.uuid}
 

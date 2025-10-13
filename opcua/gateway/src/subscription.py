@@ -17,11 +17,14 @@ from numbers import Number
 from typing import Any
 from asyncua import ua
 from asyncua.common.node import Node
+from datetime import datetime, timezone
 from openfactory.assets import AssetAttribute
+from openfactory.assets.utils import openfactory_timestamp
 from openfactory.kafka import KSQLDBClient
 from .config import KSQLDB_URL
 from .producer import GlobalAssetProducer
 from .utils import opcua_data_timestamp, opcua_event_timestamp
+from .gateway_metrics import KAFKA_SEND_LATENCY
 
 global_producer = GlobalAssetProducer(KSQLDBClient(KSQLDB_URL))
 
@@ -41,19 +44,21 @@ class SubscriptionHandler:
     Returns:
         None
     """
-    def __init__(self, opcua_device_uuid: str, logger: logging.Logger):
+    def __init__(self, opcua_device_uuid: str, logger: logging.Logger, gateway_id: str):
         """
         Initialize the SubscriptionHandler.
 
         Args:
             opcua_device_uuid (str): UUID of the device.
             logger (logging.Logger): Logger instance for debug and error messages.
+            gateway_id (str): Gateway ID
 
         Attributes:
             node_map (Dict[Node, Dict[str, str]]): Cache mapping OPC UA Node objects to metadata.
         """
         self.opcua_device_uuid = opcua_device_uuid
         self.logger = logger
+        self.gateway_id = gateway_id
 
         # Cache mapping: Node -> {"local_name": str, "browse_name": str}
         self.node_map: dict = {}
@@ -100,6 +105,7 @@ class SubscriptionHandler:
 
         self.logger.debug(f"DataChange: {local_name}:({browse_name}) -> {val}")
 
+        device_timestamp = opcua_data_timestamp(data.monitored_item.Value)
         global_producer.send(
             asset_uuid=self.opcua_device_uuid,
             asset_attribute=AssetAttribute(
@@ -107,10 +113,17 @@ class SubscriptionHandler:
                 value=val,
                 type=ofa_type,
                 tag=browse_name,
-                timestamp=opcua_data_timestamp(data.monitored_item.Value),
+                timestamp=openfactory_timestamp(device_timestamp),
             )
         )
         global_producer.flush()
+
+        # Measure latency (seconds)
+        latency = (datetime.now(timezone.utc) - device_timestamp).total_seconds()
+        if latency >= 0:  # ignore clock skew issues
+            KAFKA_SEND_LATENCY.labels(
+                gateway=self.gateway_id
+            ).observe(latency)
 
     async def event_notification(self, event: Any) -> None:
         """
@@ -153,6 +166,7 @@ class SubscriptionHandler:
             self.logger.error(f"Error parsing event: {e}, raw event={event}")
             message_text = "UNAVAILABLE"
 
+        device_timestamp = opcua_event_timestamp(event)
         global_producer.send(
             asset_uuid=self.opcua_device_uuid,
             asset_attribute=AssetAttribute(
@@ -164,3 +178,10 @@ class SubscriptionHandler:
             )
         )
         global_producer.flush()
+
+        # Measure latency (seconds)
+        latency = (datetime.now(timezone.utc) - device_timestamp).total_seconds()
+        if latency >= 0:  # ignore clock skew issues
+            KAFKA_SEND_LATENCY.labels(
+                gateway=self.gateway_id
+            ).observe(latency)
