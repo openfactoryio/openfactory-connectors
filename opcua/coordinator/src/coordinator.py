@@ -13,6 +13,8 @@ from openfactory.assets import Asset, AssetAttribute
 from openfactory.schemas.devices import Device
 from openfactory.utils import register_asset, deregister_asset
 
+from . import coordinator_metrics
+
 
 # ----------------------------
 # Logger setup
@@ -119,6 +121,37 @@ async def fetch_devices_count(client, gw_id, gw_host):
             return gw_id, {"host": gw_host, "devices_count": float('inf')}
 
 
+async def update_gateway_metrics_periodically(interval: float = 10.0):
+    """
+    Periodically update Prometheus metrics.
+
+    Args:
+        interval (float): Time in seconds between updates.
+    """
+    while True:
+        # Query deployed gateways from KSQL
+        try:
+            gateways_rows = ksql.query("SELECT GATEWAY_ID, GATEWAY_HOST FROM OPCUA_GATEWAYS;")
+        except Exception as e:
+            logger.error(f"Failed to query OPCUA_GATEWAYS table: {e}")
+            gateways_rows = []
+
+        gateways = {row["GATEWAY_ID"]: row["GATEWAY_HOST"] for row in gateways_rows}
+
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                tasks = [fetch_devices_count(client, gw_id, gw_host) for gw_id, gw_host in gateways.items()]
+                responses = await asyncio.gather(*tasks)
+            results = dict(responses)
+
+            # Update Prometheus metrics
+            coordinator_metrics.update_gateway_metrics(results)
+        except Exception as e:
+            logger.warning(f"Failed to update gateway metrics: {e}")
+
+        await asyncio.sleep(interval)
+
+
 # ----------------------------
 # Coordinator startup helper: create OPC UA assignment tables
 # ----------------------------
@@ -159,7 +192,7 @@ async def create_opcua_assignment_tables():
     """)
 
 
-async def get_assigned_gateway_url(device_uuid: str) -> str:
+async def get_assigned_gateway_url(device_uuid: str) -> tuple[str, str] | None:
     """
     Return the Gateway host to which a device is assigned.
 
@@ -167,7 +200,7 @@ async def get_assigned_gateway_url(device_uuid: str) -> str:
         device_uuid (str): Device UUID to look up.
 
     Returns:
-        str: Gateway host to which a device is assigned.
+        tuple: Gateway host and ID to which a device is assigned.
     """
     rows = ksql.query(
         f"SELECT GATEWAY_ID FROM OPCUA_DEVICE_ASSIGNMENT WHERE DEVICE_UUID='{device_uuid}';"
@@ -175,13 +208,13 @@ async def get_assigned_gateway_url(device_uuid: str) -> str:
     if not rows:
         return None
 
-    rows = ksql.query(
-        f"SELECT GATEWAY_HOST FROM OPCUA_GATEWAYS WHERE GATEWAY_ID='{rows[0]["GATEWAY_ID"]}';"
-        )
+    gateway_id = rows[0]["GATEWAY_ID"]
+    rows = ksql.query(f"SELECT GATEWAY_HOST FROM OPCUA_GATEWAYS WHERE GATEWAY_ID='{gateway_id}';")
     if not rows:
         return None
-    else:
-        return rows[0]["GATEWAY_HOST"]
+
+    gateway_host = rows[0]["GATEWAY_HOST"]
+    return gateway_host, gateway_id
 
 
 async def assign_gateway_id() -> str:
@@ -282,6 +315,10 @@ async def lifespan(app: FastAPI):
         AssetAttribute(id='application_version', value=os.environ.get('APPLICATION_VERSION'), type='Events', tag='Application.Version')
     )
 
+    # Start cleanup coroutine
+    logger.info("Start Coordinator Prometheus metrics task.")
+    metrics_task = asyncio.create_task(update_gateway_metrics_periodically())
+
     try:
         # Yield control to FastAPI
         yield
@@ -295,6 +332,13 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Failed to mark coordinator UNAVAILABLE: {e}")
 
+    # Cancel and await cleanup task
+    metrics_task.cancel()
+    try:
+        await metrics_task
+    except asyncio.CancelledError:
+        logger.info("Coordinator Prometheus metrics task cancelled on shutdown")
+
 
 # ----------------------------
 # FastAPI app
@@ -302,6 +346,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="OPCUA Coordinator",
               version=os.environ.get('APPLICATION_VERSION'),
               lifespan=lifespan)
+
+# Expose Prometheus metrics
+app.get("/metrics")(coordinator_metrics.metrics_endpoint)
+
 ksql = KSQLDBClient(os.getenv("KSQLDB_URL"))
 kafka_producer = Producer({'bootstrap.servers': os.getenv("KAFKA_BROKER")})
 gateway_register_lock = asyncio.Lock()
@@ -395,84 +443,88 @@ async def register_device(req: RegisterDeviceRequest):
             - "device_uuid": UUID of the registered device
             - "assigned_gateway": Host URL of the assigned gateway
     """
-    device_uuid = req.device.uuid
+    with coordinator_metrics.DEVICE_ASSIGNMENT_LATENCY.time():
+        device_uuid = req.device.uuid
 
-    # Query deployed gateways from KSQL
-    try:
-        gateways_rows = ksql.query("SELECT GATEWAY_ID, GATEWAY_HOST FROM OPCUA_GATEWAYS;")
-    except Exception as e:
-        logger.error(f"Failed to query OPCUA_GATEWAYS table: {e}")
-        gateways_rows = []
-
-    gateways = {row["GATEWAY_ID"]: row["GATEWAY_HOST"] for row in gateways_rows}
-
-    if not gateways:
-        raise HTTPException(status_code=500, detail="No gateways registered")
-
-    # Query each gateway’s /devices_count endpoint concurrently
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        tasks = [fetch_devices_count(client, gw_id, gw_host) for gw_id, gw_host in gateways.items()]
-        responses = await asyncio.gather(*tasks)
-    results = dict(responses)
-
-    # Pick the gateway with the fewest registered devices
-    assigned_gateway_id, assigned_info = min(
-        results.items(), key=lambda x: x[1]["devices_count"]
-    )
-    assigned_gateway_host = assigned_info["host"]
-    logger.info(f"Device {device_uuid} assigned to {assigned_gateway_id} ({assigned_gateway_host})")
-
-    async def notify_gateway():
-        url = f"{assigned_gateway_host}/add_device"
-        payload = {"device": req.device.model_dump()}
+        # Query deployed gateways from KSQL
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(url, json=payload, timeout=5)
-                resp.raise_for_status()
-                logger.info(f"✅ Gateway notified: {url} response={resp.status_code}")
+            gateways_rows = ksql.query("SELECT GATEWAY_ID, GATEWAY_HOST FROM OPCUA_GATEWAYS;")
         except Exception as e:
-            logger.error(f"❌ Failed to notify gateway {url}: {e}")
+            logger.error(f"Failed to query OPCUA_GATEWAYS table: {e}")
+            gateways_rows = []
 
-    async def persist_assignment():
-        """
-        Persists assignment.
-        Limit concurrent registrations using a semaphore to prevent thread exhaustion.
-        """
-        async with thread_semaphore:
+        gateways = {row["GATEWAY_ID"]: row["GATEWAY_HOST"] for row in gateways_rows}
+
+        if not gateways:
+            raise HTTPException(status_code=500, detail="No gateways registered")
+
+        # Query each gateway’s /devices_count endpoint concurrently
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            tasks = [fetch_devices_count(client, gw_id, gw_host) for gw_id, gw_host in gateways.items()]
+            responses = await asyncio.gather(*tasks)
+        results = dict(responses)
+
+        # Pick the gateway with the fewest registered devices
+        assigned_gateway_id, assigned_info = min(
+            results.items(), key=lambda x: x[1]["devices_count"]
+        )
+        assigned_gateway_host = assigned_info["host"]
+        logger.info(f"Device {device_uuid} assigned to {assigned_gateway_id} ({assigned_gateway_host})")
+
+        # Update metrics
+        coordinator_metrics.increment_assignment_counter()
+
+        async def notify_gateway():
+            url = f"{assigned_gateway_host}/add_device"
+            payload = {"device": req.device.model_dump()}
             try:
-                await asyncio.to_thread(
-                    ksql.insert_into_stream,
-                    "OPCUA_DEVICE_ASSIGNMENT_SOURCE",
-                    [{"DEVICE_UUID": device_uuid, "GATEWAY_ID": assigned_gateway_id}]
-                )
-                logger.info(f"Recorded assignment of device {device_uuid} to gateway {assigned_gateway_id} in KSQLDB")
+                async with httpx.AsyncClient() as client:
+                    resp = await client.post(url, json=payload, timeout=5)
+                    resp.raise_for_status()
+                    logger.info(f"✅ Gateway notified: {url} response={resp.status_code}")
             except Exception as e:
-                logger.error(f"Failed to record assignment of {device_uuid} in KSQLDB: {e}")
+                logger.error(f"❌ Failed to notify gateway {url}: {e}")
 
-    async def register_producer_safe():
-        """
-        Register Producer.
-        Limit concurrent registrations using a semaphore to prevent thread exhaustion.
-        """
-        async with thread_semaphore:
-            try:
-                producer = await create_asset_async(device_uuid.upper() + '-PRODUCER')
-                producer.add_attribute(AssetAttribute(
-                    id='opcua-gateway',
-                    value=assigned_gateway_id,
-                    type='Events',
-                    tag='ProducerURI'
-                ))
-                logger.info(f"✅ Producer registered for {device_uuid}")
-            except Exception as e:
-                logger.error(f"❌ Failed to register producer for {device_uuid}: {e}")
+        async def persist_assignment():
+            """
+            Persists assignment.
+            Limit concurrent registrations using a semaphore to prevent thread exhaustion.
+            """
+            async with thread_semaphore:
+                try:
+                    await asyncio.to_thread(
+                        ksql.insert_into_stream,
+                        "OPCUA_DEVICE_ASSIGNMENT_SOURCE",
+                        [{"DEVICE_UUID": device_uuid, "GATEWAY_ID": assigned_gateway_id}]
+                    )
+                    logger.info(f"Recorded assignment of device {device_uuid} to gateway {assigned_gateway_id} in KSQLDB")
+                except Exception as e:
+                    logger.error(f"Failed to record assignment of {device_uuid} in KSQLDB: {e}")
 
-    async with asyncio.TaskGroup() as tg:
-        tg.create_task(notify_gateway())
-        tg.create_task(register_producer_safe())
-        tg.create_task(persist_assignment())
+        async def register_producer_safe():
+            """
+            Register Producer.
+            Limit concurrent registrations using a semaphore to prevent thread exhaustion.
+            """
+            async with thread_semaphore:
+                try:
+                    producer = await create_asset_async(device_uuid.upper() + '-PRODUCER')
+                    producer.add_attribute(AssetAttribute(
+                        id='opcua-gateway',
+                        value=assigned_gateway_id,
+                        type='Events',
+                        tag='ProducerURI'
+                    ))
+                    logger.info(f"✅ Producer registered for {device_uuid}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to register producer for {device_uuid}: {e}")
 
-    return {"device_uuid": device_uuid, "assigned_gateway": assigned_gateway_id}
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(notify_gateway())
+            tg.create_task(register_producer_safe())
+            tg.create_task(persist_assignment())
+
+        return {"device_uuid": device_uuid, "assigned_gateway": assigned_gateway_id}
 
 
 @app.delete("/unregister_device/{device_uuid}")
@@ -481,21 +533,22 @@ async def unregister_device(device_uuid: str):
     Unregister a device from all gateways where it may exist.
     """
     # Find the gateway containing this device
-    assigned_gateway = await get_assigned_gateway_url(device_uuid)
-
-    if not assigned_gateway:
+    result = await get_assigned_gateway_url(device_uuid)
+    if result is None:
         raise HTTPException(status_code=404, detail=f"Device {device_uuid} not found")
+
+    gateway_host, gateway_id = result
 
     async def notify_remove():
         """ Deregister device with Gateway. """
-        url = f"{assigned_gateway}/remove_device/{device_uuid}"
+        url = f"{gateway_host}/remove_device/{device_uuid}"
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.delete(url, timeout=5)
                 resp.raise_for_status()
                 logger.info(f"✅ Gateway notified to remove {device_uuid}: {url} response={resp.status_code}")
         except Exception as e:
-            logger.error(f"❌ Failed to remove {device_uuid} on {assigned_gateway}: {e}")
+            logger.error(f"❌ Failed to remove {device_uuid} on {gateway_host}: {e}")
 
     async def deregister_device():
         """
@@ -533,12 +586,12 @@ async def unregister_device(device_uuid: str):
         tg.create_task(deregister_device())
         tg.create_task(remove_assignment())
 
-    logger.info(f"Device {device_uuid} unregistered locally from {assigned_gateway}")
+    logger.info(f"Device {device_uuid} unregistered locally from {gateway_id} ({gateway_host})")
 
     return {
         "status": "unregistered",
         "device_uuid": device_uuid,
-        "gateway": assigned_gateway
+        "gateway": gateway_id
     }
 
 
