@@ -22,6 +22,20 @@ groups:
   - name: opcua_connector_gateway_latency
     interval: 15s
     rules:
+      # Message throughput per gateway (messages/sec)
+      - record: gateway:messages_sent_rate
+        expr: sum(rate(opcua_messages_sent_total[1m])) by (gateway)
+        labels:
+          component: "opcua_connector"
+          role: "gateway"
+
+      # Current observed latency per gateway in seconds (Gauge-based)
+      - record: gateway:kafka_send_latency_current
+        expr: avg(opcua_kafka_send_latency_latest_seconds) by (gateway)
+        labels:
+          component: "opcua_connector"
+          role: "gateway"
+
       # Average latency per gateway in seconds
       - record: gateway:opcua_kafka_latency_avg
         expr: sum(rate(opcua_kafka_send_latency_seconds_sum[1m])) by (gateway)

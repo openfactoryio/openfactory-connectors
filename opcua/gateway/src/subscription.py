@@ -24,7 +24,7 @@ from openfactory.kafka import KSQLDBClient
 from .config import KSQLDB_URL
 from .producer import GlobalAssetProducer
 from .utils import opcua_data_timestamp, opcua_event_timestamp
-from .gateway_metrics import KAFKA_SEND_LATENCY
+from .gateway_metrics import MSG_SENT, SEND_LATENCY, LATEST_LATENCY
 
 global_producer = GlobalAssetProducer(KSQLDBClient(KSQLDB_URL))
 
@@ -120,10 +120,10 @@ class SubscriptionHandler:
 
         # Measure latency (seconds)
         latency = (datetime.now(timezone.utc) - device_timestamp).total_seconds()
+        MSG_SENT.labels(gateway=self.gateway_id).inc()
         if latency >= 0:  # ignore clock skew issues
-            KAFKA_SEND_LATENCY.labels(
-                gateway=self.gateway_id
-            ).observe(latency)
+            LATEST_LATENCY.labels(gateway=self.gateway_id).set(latency)
+            SEND_LATENCY.labels(gateway=self.gateway_id).observe(latency)
 
     async def event_notification(self, event: Any) -> None:
         """
@@ -181,7 +181,7 @@ class SubscriptionHandler:
 
         # Measure latency (seconds)
         latency = (datetime.now(timezone.utc) - device_timestamp).total_seconds()
+        MSG_SENT.labels(gateway=self.gateway_id).inc()
         if latency >= 0:  # ignore clock skew issues
-            KAFKA_SEND_LATENCY.labels(
-                gateway=self.gateway_id
-            ).observe(latency)
+            LATEST_LATENCY.labels(gateway=self.gateway_id).set(latency)
+            SEND_LATENCY.labels(gateway=self.gateway_id).observe(latency)
