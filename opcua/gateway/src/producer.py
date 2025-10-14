@@ -48,7 +48,12 @@ class GlobalAssetProducer(Producer):
         if hasattr(self, "_initialized"):
             return
         bootstrap_servers = bootstrap_servers or os.getenv("KAFKA_BROKER")
-        super().__init__({'bootstrap.servers': bootstrap_servers})
+        super().__init__(
+            {
+                'bootstrap.servers': bootstrap_servers,
+                'linger.ms': int(os.getenv("KAFKA_LINGER_MS", "5")),
+            }
+        )
         self.ksql = ksqlClient
         self.topic = self.ksql.get_kafka_topic("ASSETS_STREAM")
         self._initialized = True
