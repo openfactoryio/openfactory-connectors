@@ -176,7 +176,6 @@ class SubscriptionHandler:
                 timestamp=openfactory_timestamp(device_timestamp),
             )
         )
-        global_producer.flush()
 
         # Measure latency (seconds)
         latency = (datetime.now(timezone.utc) - device_timestamp).total_seconds()
