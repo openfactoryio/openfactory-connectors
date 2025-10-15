@@ -20,7 +20,7 @@ from openfactory.kafka import KSQLDBClient
 
 class GlobalAssetProducer(Producer):
     """
-    Singleton Kafka producer for sending asset attributes from all OPC UA devices.
+    Kafka producer for sending asset attributes from all OPC UA devices.
 
     This producer sends messages to the `ASSETS_STREAM` topic. It ensures
     only one instance exists globally.
@@ -29,13 +29,6 @@ class GlobalAssetProducer(Producer):
         ksql (KSQLDBClient): Client used to resolve Kafka topics.
         topic (str): Kafka topic name for sending asset attributes.
     """
-    _instance = None
-
-    def __new__(cls, *args, **kwargs) -> "GlobalAssetProducer":
-        """ Ensure only one instance of the producer exists. """
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
 
     def __init__(self, ksqlClient: KSQLDBClient, bootstrap_servers: str = None) -> None:
         """
@@ -52,6 +45,8 @@ class GlobalAssetProducer(Producer):
             {
                 'bootstrap.servers': bootstrap_servers,
                 'linger.ms': int(os.getenv("KAFKA_LINGER_MS", "5")),
+                'acks': 0,                                             # fire-and-forget: broker won't send ACK
+                'retries': 0,                                          # don't retry on errors
             }
         )
         self.ksql = ksqlClient

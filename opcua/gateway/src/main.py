@@ -32,9 +32,10 @@ from .config import OPCUA_GATEWAY_PORT, LOG_LEVEL
 from .state import _active_device_defs, _active_tasks
 from .monitor import monitor_device
 from .gateway_metrics import metrics_endpoint
+from .producer import GlobalAssetProducer
 
 
-async def rebuild_gateway_state(logger: logging.Logger, gateway_id: str) -> None:
+async def rebuild_gateway_state(logger: logging.Logger, gateway_id: str, global_producer: GlobalAssetProducer) -> None:
     """
     Rebuild in-memory gateway state from ksqlDB based on OPC UA assignments.
 
@@ -43,6 +44,7 @@ async def rebuild_gateway_state(logger: logging.Logger, gateway_id: str) -> None
     Args:
         logger (logging.Logger): Logger instance.
         gateway_id (str): The identifier of the current gateway.
+        global_producer (GlobalAssetProducer): Kafka producer of the Gateway
     """
     logger.info(f"Rebuilding gateway state for {gateway_id} from ksqlDB...")
 
@@ -96,7 +98,7 @@ async def rebuild_gateway_state(logger: logging.Logger, gateway_id: str) -> None
                 device = Device(**cfg)
                 _active_device_defs[dev_uuid] = device
                 logger.debug(f"Loaded device {dev_uuid} into gateway state.")
-                task = asyncio.create_task(monitor_device(device, logger, gateway_id))
+                task = asyncio.create_task(monitor_device(device, logger, gateway_id, global_producer))
                 _active_tasks[device.uuid] = task
             except Exception as e:
                 logger.warning(f"Failed to connect device {dev_uuid}: {e}", exc_info=True)
@@ -105,6 +107,31 @@ async def rebuild_gateway_state(logger: logging.Logger, gateway_id: str) -> None
 
     except Exception as e:
         logger.error(f"❌ Error rebuilding gateway state for {gateway_id}: {e}")
+
+
+async def _kafka_poll_loop_async(producer: GlobalAssetProducer, logger: logging.Logger, interval=0.1):
+    """
+    Continuously poll the Kafka producer in an asynchronous loop to clear delivery reports
+    and prevent the internal queue from filling up.
+
+    If the task is cancelled, it flushes any remaining messages before exiting.
+
+    Args:
+        producer (GlobalAssetProducer): The Kafka producer instance to poll.
+        logger (logging.Logger): Logger for reporting cancellations or errors.
+        interval (float, optional): Number of seconds to sleep between poll calls. Defaults to 0.1.
+
+    Raises:
+        asyncio.CancelledError: Raised when the task is cancelled, after which remaining
+            messages are flushed and the task exits cleanly.
+    """
+    try:
+        while True:
+            producer.poll(0)  # non-blocking
+            await asyncio.sleep(interval)
+    except asyncio.CancelledError:
+        producer.flush(5)
+        logger.info("Kafka poll loop task cancelled cleanly.")
 
 
 @asynccontextmanager
@@ -128,12 +155,40 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         app.state.logger.error(f"Failed to register gateway at startup: {e}")
 
-    # Rebuild local in-memory state before starting anything ---
-    await rebuild_gateway_state(app.state.logger, app.state.gateway_id)
+    # Create global producer
+    app.state.logger.info("Starting Kafka Producer")
+    app.state.global_producer = GlobalAssetProducer(ksqlClient=app.state.ksql)
+
+    # Start async Kafka poll loop
+    poll_task = asyncio.create_task(
+        _kafka_poll_loop_async(app.state.global_producer, app.state.logger)
+    )
+    app.state._kafka_poll_task = poll_task
+
+    # Rebuild local in-memory state before starting anything
+    await rebuild_gateway_state(app.state.logger, app.state.gateway_id, app.state.global_producer)
 
     yield  # <-- control returns to FastAPI while the app is running
 
     # App shutdown logic
+    app.state.logger.info("Shutting down OPC UA Gateway ...")
+
+    # Stop poll thread
+    if hasattr(app.state, "_kafka_poll_task"):
+        app.state._kafka_poll_task.cancel()
+        try:
+            await app.state._kafka_poll_task
+        except asyncio.CancelledError:
+            app.state.logger.info("Kafka poll loop task stopped cleanly.")
+
+    # Flush remaining Kafka messages
+    if hasattr(app.state, "global_producer") and app.state.global_producer:
+        try:
+            app.state.logger.info("Flushing pending Kafka messages before shutdown ...")
+            app.state.global_producer.flush(5)
+            app.state.logger.info("Kafka producer flushed successfully.")
+        except Exception as e:
+            app.state.logger.warning(f"Error flushing Kafka producer: {e}")
 
 
 app = FastAPI(title="OPCUA Gateway",

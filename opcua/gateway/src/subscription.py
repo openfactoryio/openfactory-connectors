@@ -7,7 +7,6 @@ are enriched with metadata, classified as 'Samples', 'Events', or
 'Condition', and forwarded to the global Kafka producer (`global_producer`).
 
 Key components:
-- `global_producer`: Singleton producer instance for sending asset attributes.
 - `SubscriptionHandler`: Handles both data changes and event notifications
   for a specific OPC UA device UUID.
 """
@@ -20,13 +19,9 @@ from asyncua.common.node import Node
 from datetime import datetime, timezone
 from openfactory.assets import AssetAttribute
 from openfactory.assets.utils import openfactory_timestamp
-from openfactory.kafka import KSQLDBClient
-from .config import KSQLDB_URL
 from .producer import GlobalAssetProducer
 from .utils import opcua_data_timestamp, opcua_event_timestamp
 from .gateway_metrics import MSG_SENT, SEND_LATENCY, LATEST_LATENCY
-
-global_producer = GlobalAssetProducer(KSQLDBClient(KSQLDB_URL))
 
 
 class SubscriptionHandler:
@@ -44,7 +39,7 @@ class SubscriptionHandler:
     Returns:
         None
     """
-    def __init__(self, opcua_device_uuid: str, logger: logging.Logger, gateway_id: str):
+    def __init__(self, opcua_device_uuid: str, logger: logging.Logger, gateway_id: str, global_producer: GlobalAssetProducer):
         """
         Initialize the SubscriptionHandler.
 
@@ -52,6 +47,7 @@ class SubscriptionHandler:
             opcua_device_uuid (str): UUID of the device.
             logger (logging.Logger): Logger instance for debug and error messages.
             gateway_id (str): Gateway ID
+            global_producer (GlobalAssetProducer): Kafka producer of the Gateway
 
         Attributes:
             node_map (Dict[Node, Dict[str, str]]): Cache mapping OPC UA Node objects to metadata.
@@ -59,6 +55,7 @@ class SubscriptionHandler:
         self.opcua_device_uuid = opcua_device_uuid
         self.logger = logger
         self.gateway_id = gateway_id
+        self.global_producer = global_producer
 
         # Cache mapping: Node -> {"local_name": str, "browse_name": str}
         self.node_map: dict = {}
@@ -106,7 +103,7 @@ class SubscriptionHandler:
         self.logger.debug(f"DataChange: {local_name}:({browse_name}) -> {val}")
 
         device_timestamp = opcua_data_timestamp(data.monitored_item.Value)
-        global_producer.send(
+        self.global_producer.send(
             asset_uuid=self.opcua_device_uuid,
             asset_attribute=AssetAttribute(
                 id=local_name,
@@ -166,7 +163,7 @@ class SubscriptionHandler:
             message_text = "UNAVAILABLE"
 
         device_timestamp = opcua_event_timestamp(event)
-        global_producer.send(
+        self.global_producer.send(
             asset_uuid=self.opcua_device_uuid,
             asset_attribute=AssetAttribute(
                 id="alarm",

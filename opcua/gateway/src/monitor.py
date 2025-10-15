@@ -23,7 +23,7 @@ from asyncua import Client
 from openfactory.schemas.devices import Device
 from openfactory.schemas.connectors.opcua import OPCUAConnectorSchema
 from openfactory.assets import AssetAttribute
-from .subscription import SubscriptionHandler, global_producer
+from .subscription import SubscriptionHandler, GlobalAssetProducer
 from .state import _active_device_defs
 
 
@@ -39,7 +39,7 @@ class DeviceMonitor:
     - Handling reconnects and cleanup
     """
 
-    def __init__(self, device: Device, logger: logging.Logger, gateway_id: str):
+    def __init__(self, device: Device, logger: logging.Logger, gateway_id: str, global_producer: GlobalAssetProducer):
         """
         Initialize monitoring of a given device.
 
@@ -47,10 +47,12 @@ class DeviceMonitor:
             device (Device): The device definition, including UUID and connector schema.
             logger (logging.Logger): Logger instance for debug and error messages.
             gateway_id (str): Gateway ID
+            global_producer (GlobalAssetProducer): Kafka producer of the Gateway
         """
         self.device = device
         self.dev_uuid = device.uuid
         self.gateway_id = gateway_id
+        self.global_producer = global_producer
         self.schema = OPCUAConnectorSchema(**device.connector.model_dump())
         self.sub = None
 
@@ -120,7 +122,7 @@ class DeviceMonitor:
                 self.log.error(f"[{self.dev_uuid}] OPC UA client error: {type(e).__name__}: {e}")
                 self.log.debug(traceback.format_exc())
                 try:
-                    global_producer.send(
+                    self.global_producer.send(
                         asset_uuid=self.dev_uuid,
                         asset_attribute=AssetAttribute(id='avail', value="UNAVAILABLE", tag="Availability", type="Events")
                     )
@@ -139,7 +141,7 @@ class DeviceMonitor:
             idx = await self._resolve_namespace(client)
             device_node = await self._resolve_device_node(client, idx)
 
-            handler = SubscriptionHandler(self.dev_uuid, self.log, self.gateway_id)
+            handler = SubscriptionHandler(self.dev_uuid, self.log, self.gateway_id, self.global_producer)
             self.sub = await client.create_subscription(
                 period=float(self.schema.server.subscription.publishing_interval),
                 handler=handler,
@@ -148,7 +150,7 @@ class DeviceMonitor:
             await self._subscribe_variables(device_node, idx, handler)
             await self._subscribe_events(device_node)
 
-            global_producer.send(
+            self.global_producer.send(
                 asset_uuid=self.dev_uuid,
                 asset_attribute=AssetAttribute(id='avail', value="AVAILABLE", tag="Availability", type="Events")
             )
@@ -261,7 +263,7 @@ class DeviceMonitor:
         """
         self.log.info(f"[{self.dev_uuid}] Monitor task cancelled; cleaning up")
         try:
-            global_producer.send(
+            self.global_producer.send(
                 asset_uuid=self.dev_uuid,
                 asset_attribute=AssetAttribute(id='avail', value="UNAVAILABLE", tag="Availability", type="Events")
             )
@@ -277,7 +279,7 @@ class DeviceMonitor:
         self.log.info(f"[{self.dev_uuid}] OPC UA connector removed succesfully")
 
 
-async def monitor_device(device: Device, logger, gateway_id: str):
+async def monitor_device(device: Device, logger, gateway_id: str, global_producer: GlobalAssetProducer):
     """
     Run subscription loop for a single device.
 
@@ -287,9 +289,10 @@ async def monitor_device(device: Device, logger, gateway_id: str):
         device (Device): Device schema instance defining OPC UA connector settings.
         logger (logging.Logger): Logger instance for debug and error messages.
         gateway_id (str): Gateway ID
+        global_producer (GlobalAssetProducer): Kafka producer of the Gateway
 
     Returns:
         None
     """
-    monitor = DeviceMonitor(device, logger, gateway_id)
+    monitor = DeviceMonitor(device, logger, gateway_id, global_producer)
     await monitor.run()
