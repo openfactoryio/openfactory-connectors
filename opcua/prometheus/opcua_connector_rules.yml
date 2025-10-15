@@ -29,6 +29,13 @@ groups:
           component: "opcua_connector"
           role: "gateway"
 
+      # Total message throughput (messages/sec)
+      - record: gateway:opcua_messages_rate_total
+        expr: sum(rate(opcua_messages_sent_total[1m]))
+        labels:
+          component: "opcua_connector"
+          role: "gateway"
+
       # Current observed latency per gateway in seconds (Gauge-based)
       - record: gateway:kafka_send_latency_current
         expr: avg(opcua_kafka_send_latency_latest_seconds) by (gateway)
