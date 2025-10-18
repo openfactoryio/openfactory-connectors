@@ -21,8 +21,10 @@ import uvicorn
 import logging
 import json
 import httpx
+import time
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
+from typing import Optional
 from openfactory.kafka import KSQLDBClient
 from openfactory.schemas.devices import Device
 from .registration import register_gateway
@@ -31,8 +33,50 @@ from .utils import setup_logging
 from .config import OPCUA_GATEWAY_PORT, LOG_LEVEL
 from .state import _active_device_defs, _active_tasks
 from .monitor import monitor_device
-from .gateway_metrics import metrics_endpoint
+from .gateway_metrics import EVENT_LOOP_LAG, metrics_endpoint
 from .producer import GlobalAssetProducer
+
+
+def log_task_exceptions(task: asyncio.Task, name: Optional[str] = None) -> None:
+    """
+    Logs exceptions from an asyncio.Task safely and consistently.
+
+    This function inspects an asyncio task upon completion and logs its
+    outcome in a standardized way. It handles normal completion, cancellation,
+    and exceptional termination, including rare cases where retrieving the
+    exception itself fails.
+
+    The function:
+      * Logs an info message if the task was cancelled.
+      * Logs an error if retrieving the exception raises an unexpected error.
+      * Logs the exception and its traceback if the task raised an exception.
+      * Logs an info message if the task completed successfully.
+
+    Args:
+        task (asyncio.Task): The asyncio task whose result or exception should
+            be logged.
+        name (Optional[str]): An optional name to identify the task in log
+            messages. If not provided, the task's `repr()` will be used.
+    """
+    if name is None:
+        name = repr(task)
+
+    if task.cancelled():
+        app.state.logger.info("Task %s cancelled", name)
+        return
+
+    try:
+        exc = task.exception()  # may raise if something odd happens
+    except Exception as e:
+        # This should be rare; log it (include traceback).
+        app.state.logger.error("Error retrieving exception from task %s: %s", name, e, exc_info=True)
+        return
+
+    if exc is not None:
+        # exc is the exception instance; provide an exc_info tuple so logging prints the traceback.
+        app.state.logger.error("Task %s failed: %s", name, exc, exc_info=(type(exc), exc, exc.__traceback__))
+    else:
+        app.state.logger.info("Task %s completed cleanly", name)
 
 
 async def rebuild_gateway_state(logger: logging.Logger, gateway_id: str, global_producer: GlobalAssetProducer) -> None:
@@ -134,6 +178,25 @@ async def _kafka_poll_loop_async(producer: GlobalAssetProducer, logger: logging.
         logger.info("Kafka poll loop task cancelled cleanly.")
 
 
+async def _aysncio_event_loop_monitor() -> None:
+    """
+    Monitor the asyncio event loop lag and report it.
+
+    Periodically measures how much the event loop is delayed compared to
+    the expected sleep interval. Updates the Prometheus gauge `EVENT_LOOP_LAG`.
+
+    This task is intended to run as a background task and should never block.
+    """
+    while True:
+        start = time.perf_counter()
+        await asyncio.sleep(1)
+        lag = time.perf_counter() - start - 1
+        try:
+            EVENT_LOOP_LAG.labels(gateway=app.state.gateway_id).set(lag)
+        except Exception as gauge_err:
+            app.state.logger.warning(f"Failed to update Prometheus EVENT_LOOP_LAG gauge: {gauge_err}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -168,10 +231,28 @@ async def lifespan(app: FastAPI):
     # Rebuild local in-memory state before starting anything
     await rebuild_gateway_state(app.state.logger, app.state.gateway_id, app.state.global_producer)
 
+    # Start asyncio event loop monitor
+    app.state.logger.info("Starting asyncio event loop monitor task.")
+    loop_monitor_task = asyncio.create_task(
+        _aysncio_event_loop_monitor()
+    )
+    loop_monitor_task.add_done_callback(
+        lambda t: log_task_exceptions(t, "_aysncio_event_loop_monitor")
+    )
+    app.state._aysncio_event_loop_monitor_task = loop_monitor_task
+
     yield  # <-- control returns to FastAPI while the app is running
 
     # App shutdown logic
     app.state.logger.info("Shutting down OPC UA Gateway ...")
+
+    # Stop asyncio event loop monitor
+    if hasattr(app.state, "_aysncio_event_loop_monitor_task"):
+        app.state._aysncio_event_loop_monitor_task.cancel()
+        try:
+            await app.state._aysncio_event_loop_monitor_task
+        except asyncio.CancelledError:
+            app.state.logger.info("asyncio event loop monitor task stopped cleanly.")
 
     # Stop poll thread
     if hasattr(app.state, "_kafka_poll_task"):

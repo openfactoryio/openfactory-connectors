@@ -4,6 +4,12 @@ from fastapi import Response
 
 
 # Metrics definitions
+EVENT_LOOP_LAG = Gauge(
+    "event_loop_lag_seconds",
+    "AsyncIO event loop lag",
+    ["gateway"]
+)
+
 MSG_SENT = Counter(
     "opcua_messages_sent_total",
     "Total messages sent to Kafka",
