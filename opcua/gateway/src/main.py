@@ -226,6 +226,9 @@ async def lifespan(app: FastAPI):
     poll_task = asyncio.create_task(
         _kafka_poll_loop_async(app.state.global_producer, app.state.logger)
     )
+    poll_task.add_done_callback(
+        lambda t: log_task_exceptions(t, "_kafka_poll_loop_async")
+    )
     app.state._kafka_poll_task = poll_task
 
     # Rebuild local in-memory state before starting anything
