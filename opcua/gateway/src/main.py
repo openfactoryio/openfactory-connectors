@@ -17,6 +17,7 @@ To run the gateway:
 
 import os
 import asyncio
+import uvloop
 import uvicorn
 import logging
 import json
@@ -294,4 +295,15 @@ app.include_router(api_router)
 # Entry point for local dev
 # ----------------------------
 if __name__ == "__main__":
-    uvicorn.run("opcua.gateway.src.main:app", host="0.0.0.0", port=OPCUA_GATEWAY_PORT, reload=True)
+
+    async def main():
+        config = uvicorn.Config(
+            "opcua.gateway.src.main:app",
+            host="0.0.0.0",
+            port=OPCUA_GATEWAY_PORT,
+            reload=True,
+        )
+        server = uvicorn.Server(config)
+        await server.serve()
+
+    uvloop.run(main())

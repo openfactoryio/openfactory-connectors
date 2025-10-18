@@ -8,6 +8,7 @@ dependencies = [
     "fastapi",
     "uvicorn",
     "prometheus-client",
+    "uvloop",
 ]
 
 [project.optional-dependencies]
