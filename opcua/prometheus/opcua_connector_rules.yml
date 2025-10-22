@@ -36,13 +36,6 @@ groups:
           component: "opcua_connector"
           role: "gateway"
 
-      # Current observed latency per gateway in seconds (Gauge-based)
-      - record: gateway:kafka_send_latency_current
-        expr: avg(opcua_kafka_send_latency_latest_seconds) by (gateway)
-        labels:
-          component: "opcua_connector"
-          role: "gateway"
-
       # Average latency per gateway in seconds
       - record: gateway:opcua_kafka_latency_avg
         expr: sum(rate(opcua_kafka_send_latency_seconds_sum[1m])) by (gateway)
@@ -68,6 +61,20 @@ groups:
                 0.99,
                 sum(rate(opcua_kafka_send_latency_seconds_bucket[1m])) by (le, gateway)
               )
+        labels:
+          component: "opcua_connector"
+          role: "gateway"
+
+      # Average receive latency per gateway
+      - record: gateway:opcua_receive_latency_avg
+        expr: avg_over_time(opcua_delivery_latency_seconds[1m]) by (gateway)
+        labels:
+          component: "opcua_connector"
+          role: "gateway"
+
+      # Average size of internal async queue
+      - record: gateway:opcua_queue_size_avg
+        expr: avg(opcua_messages_queue) by (gateway)
         labels:
           component: "opcua_connector"
           role: "gateway"
