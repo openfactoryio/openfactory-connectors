@@ -17,13 +17,13 @@ a device monitor in an asyncio task.
 
 import asyncio
 import traceback
-import logging
 import os
+from fastapi import FastAPI
 from asyncua import Client
 from openfactory.schemas.devices import Device
 from openfactory.schemas.connectors.opcua import OPCUAConnectorSchema
 from openfactory.assets import AssetAttribute
-from .subscription import SubscriptionHandler, GlobalAssetProducer
+from .subscription import SubscriptionHandler
 from .state import _active_device_defs
 
 
@@ -39,20 +39,19 @@ class DeviceMonitor:
     - Handling reconnects and cleanup
     """
 
-    def __init__(self, device: Device, logger: logging.Logger, gateway_id: str, global_producer: GlobalAssetProducer):
+    def __init__(self, device: Device, app: FastAPI):
         """
         Initialize monitoring of a given device.
 
         Args:
             device (Device): The device definition, including UUID and connector schema.
-            logger (logging.Logger): Logger instance for debug and error messages.
-            gateway_id (str): Gateway ID
-            global_producer (GlobalAssetProducer): Kafka producer of the Gateway
+            app (FastAPI): The FastAPI application instance used to access shared state
         """
         self.device = device
+        self.app = app
         self.dev_uuid = device.uuid
-        self.gateway_id = gateway_id
-        self.global_producer = global_producer
+        self.gateway_id = app.state.gateway_id
+        self.global_producer = app.state.global_producer
         self.schema = OPCUAConnectorSchema(**device.connector.model_dump())
         self.sub = None
 
@@ -60,10 +59,10 @@ class DeviceMonitor:
         _active_device_defs[self.dev_uuid] = self.device
 
         # Logging
-        self.log = logger
+        self.log = app.state.logger
 
         # Register Producer Attributes with OpenFactory
-        global_producer.send(
+        self.global_producer.send(
             asset_uuid=f"{self.dev_uuid}-PRODUCER",
             asset_attribute=AssetAttribute(
                 id='avail',
@@ -72,7 +71,7 @@ class DeviceMonitor:
                 type="Events"
             )
         )
-        global_producer.send(
+        self.global_producer.send(
             asset_uuid=f"{self.dev_uuid}-PRODUCER",
             asset_attribute=AssetAttribute(
                 id='application_manufacturer',
@@ -81,7 +80,7 @@ class DeviceMonitor:
                 tag='Application.Manufacturer'
             )
         )
-        global_producer.send(
+        self.global_producer.send(
             asset_uuid=f"{self.dev_uuid}-PRODUCER",
             asset_attribute=AssetAttribute(
                 id='application_license',
@@ -90,7 +89,7 @@ class DeviceMonitor:
                 tag='Application.License'
             )
         )
-        global_producer.send(
+        self.global_producer.send(
             asset_uuid=f"{self.dev_uuid}-PRODUCER",
             asset_attribute=AssetAttribute(
                 id='application_version',
@@ -141,7 +140,7 @@ class DeviceMonitor:
             idx = await self._resolve_namespace(client)
             device_node = await self._resolve_device_node(client, idx)
 
-            handler = SubscriptionHandler(self.dev_uuid, self.log, self.gateway_id, self.global_producer)
+            handler = SubscriptionHandler(self.dev_uuid, self.app)
             self.sub = await client.create_subscription(
                 period=float(self.schema.server.subscription.publishing_interval),
                 handler=handler,
@@ -279,20 +278,19 @@ class DeviceMonitor:
         self.log.info(f"[{self.dev_uuid}] OPC UA connector removed succesfully")
 
 
-async def monitor_device(device: Device, logger, gateway_id: str, global_producer: GlobalAssetProducer):
+async def monitor_device(device: Device, app: FastAPI):
     """
     Run subscription loop for a single device.
 
-    This function is cancellable. When cancelled it will attempt a clean shutdown.
+    This task manages the full monitoring lifecycle of a device, including:
+      - Establishing the OPC UA session
+      - Subscribing to variables and events
+      - Forwarding updates to the global producer or queue
+      - Handling reconnects and clean shutdowns
 
     Args:
         device (Device): Device schema instance defining OPC UA connector settings.
-        logger (logging.Logger): Logger instance for debug and error messages.
-        gateway_id (str): Gateway ID
-        global_producer (GlobalAssetProducer): Kafka producer of the Gateway
-
-    Returns:
-        None
+        app (FastAPI): The FastAPI application instance used to access shared state
     """
-    monitor = DeviceMonitor(device, logger, gateway_id, global_producer)
+    monitor = DeviceMonitor(device, app)
     await monitor.run()

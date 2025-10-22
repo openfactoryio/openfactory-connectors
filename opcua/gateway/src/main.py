@@ -19,22 +19,22 @@ import os
 import asyncio
 import uvloop
 import uvicorn
-import logging
 import json
 import httpx
 import time
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from typing import Optional
+from datetime import datetime, timezone
 from openfactory.kafka import KSQLDBClient
 from openfactory.schemas.devices import Device
 from .registration import register_gateway
 from .api import router as api_router
 from .utils import setup_logging
-from .config import OPCUA_GATEWAY_PORT, LOG_LEVEL
+from .config import OPCUA_GATEWAY_PORT, LOG_LEVEL, KAFKA_SEND_INTERVAL_MS, KAFKA_QUEUE_MAXSIZE
 from .state import _active_device_defs, _active_tasks
 from .monitor import monitor_device
-from .gateway_metrics import EVENT_LOOP_LAG, metrics_endpoint
+from .gateway_metrics import EVENT_LOOP_LAG, MSG_QUEUE, SEND_LATENCY, metrics_endpoint
 from .producer import GlobalAssetProducer
 
 
@@ -80,17 +80,17 @@ def log_task_exceptions(task: asyncio.Task, name: Optional[str] = None) -> None:
         app.state.logger.info("Task %s completed cleanly", name)
 
 
-async def rebuild_gateway_state(logger: logging.Logger, gateway_id: str, global_producer: GlobalAssetProducer) -> None:
+async def rebuild_gateway_state(app: FastAPI) -> None:
     """
     Rebuild in-memory gateway state from ksqlDB based on OPC UA assignments.
 
     Only devices assigned to this gateway (from OPCUA_DEVICE_ASSIGNMENT) are loaded.
 
     Args:
-        logger (logging.Logger): Logger instance.
-        gateway_id (str): The identifier of the current gateway.
-        global_producer (GlobalAssetProducer): Kafka producer of the Gateway
+        app (FastAPI): The FastAPI application instance used to access shared state
     """
+    logger = app.state.logger
+    gateway_id = app.state.gateway_id
     logger.info(f"Rebuilding gateway state for {gateway_id} from ksqlDB...")
 
     def _fetch_assigned_devices():
@@ -143,7 +143,7 @@ async def rebuild_gateway_state(logger: logging.Logger, gateway_id: str, global_
                 device = Device(**cfg)
                 _active_device_defs[dev_uuid] = device
                 logger.debug(f"Loaded device {dev_uuid} into gateway state.")
-                task = asyncio.create_task(monitor_device(device, logger, gateway_id, global_producer))
+                task = asyncio.create_task(monitor_device(device, app))
                 _active_tasks[device.uuid] = task
             except Exception as e:
                 logger.warning(f"Failed to connect device {dev_uuid}: {e}", exc_info=True)
@@ -154,7 +154,7 @@ async def rebuild_gateway_state(logger: logging.Logger, gateway_id: str, global_
         logger.error(f"❌ Error rebuilding gateway state for {gateway_id}: {e}")
 
 
-async def _kafka_poll_loop_async(producer: GlobalAssetProducer, logger: logging.Logger, interval=0.1):
+async def _kafka_poll_loop_async(app: FastAPI, interval=0.1):
     """
     Continuously poll the Kafka producer in an asynchronous loop to clear delivery reports
     and prevent the internal queue from filling up.
@@ -162,8 +162,7 @@ async def _kafka_poll_loop_async(producer: GlobalAssetProducer, logger: logging.
     If the task is cancelled, it flushes any remaining messages before exiting.
 
     Args:
-        producer (GlobalAssetProducer): The Kafka producer instance to poll.
-        logger (logging.Logger): Logger for reporting cancellations or errors.
+        app (FastAPI): The FastAPI application instance used to access shared state.
         interval (float, optional): Number of seconds to sleep between poll calls. Defaults to 0.1.
 
     Raises:
@@ -172,11 +171,55 @@ async def _kafka_poll_loop_async(producer: GlobalAssetProducer, logger: logging.
     """
     try:
         while True:
-            producer.poll(0)  # non-blocking
+            app.state.global_producer.poll(0)  # non-blocking
             await asyncio.sleep(interval)
     except asyncio.CancelledError:
-        producer.flush(5)
-        logger.info("Kafka poll loop task cancelled cleanly.")
+        app.state.global_producer.flush(5)
+        app.state.info("Kafka poll loop task cancelled cleanly.")
+
+
+async def _kafka_writer_loop_async(app: FastAPI, batch_interval: float = 0.005) -> None:
+    """
+    Periodically drain the queue and send messages to Kafka in bursts.
+
+    Args:
+        app (FastAPI): The FastAPI application instance used to access shared state.
+        batch_interval (float): Time interval (in seconds) between flushes. Defaults to 0.005.
+    """
+    try:
+        while True:
+            await asyncio.sleep(batch_interval)
+
+            batch = []
+            MSG_QUEUE.labels(gateway=app.state.gateway_id).set(app.state.queue.qsize())
+
+            # Drain as many messages as are available without blocking
+            while not app.state.queue.empty():
+                try:
+                    batch.append(app.state.queue.get_nowait())
+                except asyncio.QueueEmpty:
+                    break
+
+            if not batch:
+                continue
+
+            # Send all messages in one tight loop
+            now_utc = datetime.now(timezone.utc)
+            for msg in batch:
+                try:
+                    app.state.global_producer.send(
+                        asset_uuid=msg["asset_uuid"],
+                        asset_attribute=msg["asset_attribute"],
+                    )
+                    latency = (now_utc - msg["device_timestamp"]).total_seconds()
+                    SEND_LATENCY.labels(gateway=app.state.gateway_id).observe(latency)
+                except Exception as e:
+                    app.state.logger.warning(f"Kafka send failed: {e}", exc_info=True)
+                finally:
+                    app.state.queue.task_done()
+
+    except asyncio.CancelledError:
+        app.state.logger.info("Kafka writer loop cancelled cleanly.")
 
 
 async def _aysncio_event_loop_monitor() -> None:
@@ -224,16 +267,21 @@ async def lifespan(app: FastAPI):
     app.state.global_producer = GlobalAssetProducer(ksqlClient=app.state.ksql)
 
     # Start async Kafka poll loop
-    poll_task = asyncio.create_task(
-        _kafka_poll_loop_async(app.state.global_producer, app.state.logger)
-    )
+    app.state.logger.info("Starting Kafka Producer poll task")
+    poll_task = asyncio.create_task(_kafka_poll_loop_async(app))
     poll_task.add_done_callback(
         lambda t: log_task_exceptions(t, "_kafka_poll_loop_async")
     )
     app.state._kafka_poll_task = poll_task
 
+    # Start Kafka writer loop
+    app.state.logger.info("Starting Kafka Producer writer loop.")
+    writer_task = asyncio.create_task(_kafka_writer_loop_async(app, KAFKA_SEND_INTERVAL_MS/1000.0))
+    writer_task.add_done_callback(lambda t: log_task_exceptions(t, "_kafka_writer_loop_async"))
+    app.state._kafka_writer_task = writer_task
+
     # Rebuild local in-memory state before starting anything
-    await rebuild_gateway_state(app.state.logger, app.state.gateway_id, app.state.global_producer)
+    await rebuild_gateway_state(app)
 
     # Start asyncio event loop monitor
     app.state.logger.info("Starting asyncio event loop monitor task.")
@@ -275,6 +323,13 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             app.state.logger.warning(f"Error flushing Kafka producer: {e}")
 
+    # Stop Kafka writer loop
+    if hasattr(app.state, "_kafka_writer_task"):
+        app.state._kafka_writer_task.cancel()
+        try:
+            await app.state._kafka_writer_task
+        except asyncio.CancelledError:
+            app.state.logger.info("Kafka writer loop task stopped cleanly.")
 
 app = FastAPI(title="OPCUA Gateway",
               version=os.environ.get('APPLICATION_VERSION'),
@@ -283,6 +338,7 @@ app.state.logger = setup_logging(level=LOG_LEVEL)
 app.state.gateway_id = 'UNAVAILABLE'
 app.state.ksql = KSQLDBClient(os.getenv("KSQLDB_URL"))
 app.state.http_client = httpx.AsyncClient(timeout=10.0)
+app.state.queue = asyncio.Queue(maxsize=KAFKA_QUEUE_MAXSIZE)
 
 # Expose Prometheus metrics
 app.get("/metrics")(metrics_endpoint)

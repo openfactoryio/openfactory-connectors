@@ -16,16 +16,23 @@ MSG_SENT = Counter(
     ["gateway"]
 )
 
-SEND_LATENCY = Histogram(
-    "opcua_kafka_send_latency_seconds",
-    "Time difference between OPC UA data timestamp and Kafka send time (seconds)",
+MSG_QUEUE = Gauge(
+    "opcua_messages_queue",
+    "Current number of messages in the internal async queue awaiting Kafka send",
     ["gateway"]
 )
 
-LATEST_LATENCY = Gauge(
-    "opcua_kafka_send_latency_latest_seconds",
-    "Latest measured latency from OPC UA data timestamp to successful Kafka send (seconds)",
+RECIEVE_LATENCY = Gauge(
+    "opcua_delivery_latency_seconds",
+    "Time difference between the OPC UA device timestamp and when the gateway receives the value (seconds)",
     ["gateway"]
+)
+
+SEND_LATENCY = Histogram(
+    "opcua_kafka_send_latency_seconds",
+    "Time difference between OPC UA data timestamp and Kafka send time (seconds)",
+    ["gateway"],
+    buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.5, 1)
 )
 
 

@@ -11,7 +11,7 @@ Key components:
   for a specific OPC UA device UUID.
 """
 
-import logging
+from fastapi import FastAPI
 from numbers import Number
 from typing import Any
 from asyncua import ua
@@ -19,9 +19,8 @@ from asyncua.common.node import Node
 from datetime import datetime, timezone
 from openfactory.assets import AssetAttribute
 from openfactory.assets.utils import openfactory_timestamp
-from .producer import GlobalAssetProducer
 from .utils import opcua_data_timestamp, opcua_event_timestamp
-from .gateway_metrics import MSG_SENT, SEND_LATENCY, LATEST_LATENCY
+from .gateway_metrics import MSG_SENT, RECIEVE_LATENCY
 
 
 class SubscriptionHandler:
@@ -39,23 +38,21 @@ class SubscriptionHandler:
     Returns:
         None
     """
-    def __init__(self, opcua_device_uuid: str, logger: logging.Logger, gateway_id: str, global_producer: GlobalAssetProducer):
+    def __init__(self, opcua_device_uuid: str, app: FastAPI):
         """
         Initialize the SubscriptionHandler.
 
         Args:
             opcua_device_uuid (str): UUID of the device.
-            logger (logging.Logger): Logger instance for debug and error messages.
-            gateway_id (str): Gateway ID
-            global_producer (GlobalAssetProducer): Kafka producer of the Gateway
+            app (FastAPI): The FastAPI application instance used to access shared state
 
         Attributes:
             node_map (Dict[Node, Dict[str, str]]): Cache mapping OPC UA Node objects to metadata.
         """
         self.opcua_device_uuid = opcua_device_uuid
-        self.logger = logger
-        self.gateway_id = gateway_id
-        self.global_producer = global_producer
+        self.logger = app.state.logger
+        self.gateway_id = app.state.gateway_id
+        self.queue = app.state.queue
 
         # Cache mapping: Node -> {"local_name": str, "browse_name": str}
         self.node_map: dict = {}
@@ -103,23 +100,29 @@ class SubscriptionHandler:
         self.logger.debug(f"DataChange: {local_name}:({browse_name}) -> {val}")
 
         device_timestamp = opcua_data_timestamp(data.monitored_item.Value)
-        self.global_producer.send(
-            asset_uuid=self.opcua_device_uuid,
-            asset_attribute=AssetAttribute(
+        message = {
+            "asset_uuid": self.opcua_device_uuid,
+            "asset_attribute": AssetAttribute(
                 id=local_name,
                 value=val,
                 type=ofa_type,
                 tag=browse_name,
                 timestamp=openfactory_timestamp(device_timestamp),
-            )
-        )
+            ),
+            "device_timestamp": device_timestamp,
+        }
+
+        try:
+            await self.queue.put(message)
+        except Exception as e:
+            self.logger.error(f"Failed to enqueue data for {self.opcua_device_uuid}: {e}")
+            return
 
         # Measure latency (seconds)
         latency = (datetime.now(timezone.utc) - device_timestamp).total_seconds()
         MSG_SENT.labels(gateway=self.gateway_id).inc()
         if latency >= 0:  # ignore clock skew issues
-            LATEST_LATENCY.labels(gateway=self.gateway_id).set(latency)
-            SEND_LATENCY.labels(gateway=self.gateway_id).observe(latency)
+            RECIEVE_LATENCY.labels(gateway=self.gateway_id).set(latency)
 
     async def event_notification(self, event: Any) -> None:
         """
@@ -163,20 +166,26 @@ class SubscriptionHandler:
             message_text = "UNAVAILABLE"
 
         device_timestamp = opcua_event_timestamp(event)
-        self.global_producer.send(
-            asset_uuid=self.opcua_device_uuid,
-            asset_attribute=AssetAttribute(
+        send_payload = {
+            "asset_uuid": self.opcua_device_uuid,
+            "asset_attribute": AssetAttribute(
                 id="alarm",
                 value=message_text,
                 type="Condition",
                 tag=tag,
                 timestamp=openfactory_timestamp(device_timestamp),
-            )
-        )
+            ),
+            "device_timestamp": device_timestamp,
+        }
+
+        try:
+            await self.queue.put(send_payload)
+        except Exception as e:
+            self.logger.error(f"Failed to enqueue event for {self.opcua_device_uuid}: {e}")
+            return
 
         # Measure latency (seconds)
         latency = (datetime.now(timezone.utc) - device_timestamp).total_seconds()
         MSG_SENT.labels(gateway=self.gateway_id).inc()
         if latency >= 0:  # ignore clock skew issues
-            LATEST_LATENCY.labels(gateway=self.gateway_id).set(latency)
-            SEND_LATENCY.labels(gateway=self.gateway_id).observe(latency)
+            RECIEVE_LATENCY.labels(gateway=self.gateway_id).set(latency)
