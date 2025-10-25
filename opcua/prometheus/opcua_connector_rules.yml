@@ -19,9 +19,16 @@
 # ----------------------------------------------------------------------------------
 
 groups:
-  - name: opcua_connector_gateway_latency
+  - name: opcua_connector_gateway_metrics
     interval: 15s
     rules:
+      # Build info per gateway
+      - record: gateway:opcua_build_info
+        expr: opcua_gateway_build_info
+        labels:
+          component: "opcua_connector"
+          role: "gateway"
+
       # Message throughput per gateway (messages/sec)
       - record: gateway:messages_sent_rate
         expr: sum(rate(opcua_messages_sent_total[1m])) by (gateway)
@@ -36,38 +43,45 @@ groups:
           component: "opcua_connector"
           role: "gateway"
 
+      # Average batch size per gateway
+      - record: gateway:opcua_batch_size_avg
+        expr: avg(opcua_batch_size) by (gateway)
+        labels:
+          component: "opcua_connector"
+          role: "gateway"
+
+      # Batch processing throughput per gateway (batches/sec)
+      - record: gateway:batches_sent_rate
+        expr: sum(rate(opcua_batches_processed_total[1m])) by (gateway)
+        labels:
+          component: "opcua_connector"
+          role: "gateway"
+
       # Average batch processing duration per gateway (seconds)
-      - record: gateway:kafka_batch_processing_duration_avg
-        expr: sum(rate(kafka_batch_processing_duration_seconds_sum[1m])) by (gateway)
+      - record: gateway:opcua_batch_processing_duration_avg
+        expr: sum(rate(opcua_batch_processing_duration_seconds_sum[1m])) by (gateway)
               /
-              sum(rate(kafka_batch_processing_duration_seconds_count[1m])) by (gateway)
+              sum(rate(opcua_batch_processing_duration_seconds_count[1m])) by (gateway)
         labels:
           component: "opcua_connector"
           role: "gateway"
 
       # 95th percentile batch processing duration per gateway
-      - record: gateway:kafka_batch_processing_duration_p95
+      - record: gateway:opcua_batch_processing_duration_p95
         expr: histogram_quantile(
                 0.95,
-                sum(rate(kafka_batch_processing_duration_seconds_bucket[1m])) by (le, gateway)
+                sum(rate(opcua_batch_processing_duration_seconds_bucket[1m])) by (le, gateway)
               )
         labels:
           component: "opcua_connector"
           role: "gateway"
 
       # 99th percentile batch processing duration per gateway
-      - record: gateway:kafka_batch_processing_duration_p99
+      - record: gateway:opcua_batch_processing_duration_p99
         expr: histogram_quantile(
                 0.99,
-                sum(rate(kafka_batch_processing_duration_seconds_bucket[1m])) by (le, gateway)
+                sum(rate(opcua_batch_processing_duration_seconds_bucket[1m])) by (le, gateway)
               )
-        labels:
-          component: "opcua_connector"
-          role: "gateway"
-
-      # Average internal async queue size per gateway
-      - record: gateway:opcua_queue_size_avg
-        expr: avg(opcua_messages_queue) by (gateway)
         labels:
           component: "opcua_connector"
           role: "gateway"

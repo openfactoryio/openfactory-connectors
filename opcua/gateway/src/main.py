@@ -33,8 +33,8 @@ from .utils import setup_logging
 from .config import OPCUA_GATEWAY_PORT, LOG_LEVEL, KAFKA_SEND_INTERVAL_MS, KAFKA_QUEUE_MAXSIZE
 from .state import _active_device_defs, _active_tasks
 from .monitor import monitor_device
-from .gateway_metrics import EVENT_LOOP_LAG, MSG_QUEUE, MSG_SENT, KAFKA_BATCH_PROCESSING_DURATION, metrics_endpoint
 from .producer import GlobalAssetProducer
+from . import gateway_metrics as gateway_metrics
 
 
 def log_task_exceptions(task: asyncio.Task, name: Optional[str] = None) -> None:
@@ -191,13 +191,13 @@ async def _kafka_writer_loop_async(app: FastAPI, batch_interval: float = 0.005) 
             await asyncio.sleep(batch_interval)
             loop_lag = max(0.0, time.perf_counter() - sleep_start - batch_interval)
             try:
-                EVENT_LOOP_LAG.labels(gateway=app.state.gateway_id).set(loop_lag)
-            except Exception as gauge_err:
-                app.state.logger.warning(f"Failed to update Prometheus EVENT_LOOP_LAG gauge: {gauge_err}")
+                gateway_metrics.EVENT_LOOP_LAG.labels(gateway=app.state.gateway_id).set(loop_lag)
+                gateway_metrics.BATCH_PROCESSED.labels(gateway=app.state.gateway_id).inc()
+            except Exception as prom_err:
+                app.state.logger.warning(f"Failed to update Prometheus EVENT_LOOP_LAG / BATCH_PROCESSED: {prom_err}")
 
             batch_start = time.perf_counter()
             batch = []
-            MSG_QUEUE.labels(gateway=app.state.gateway_id).set(app.state.queue.qsize())
 
             # Drain as many messages as are available without blocking
             while not app.state.queue.empty():
@@ -222,8 +222,12 @@ async def _kafka_writer_loop_async(app: FastAPI, batch_interval: float = 0.005) 
                     app.state.queue.task_done()
 
             duration = time.perf_counter() - batch_start
-            KAFKA_BATCH_PROCESSING_DURATION.labels(gateway=app.state.gateway_id).observe(duration)
-            MSG_SENT.labels(gateway=app.state.gateway_id).inc(len(batch))
+            try:
+                gateway_metrics.KAFKA_BATCH_PROCESSING_DURATION.labels(gateway=app.state.gateway_id).observe(duration)
+                gateway_metrics.BATCH_SIZE.labels(gateway=app.state.gateway_id).set(len(batch))
+                gateway_metrics.MSG_SENT.labels(gateway=app.state.gateway_id).inc(len(batch))
+            except Exception as prom_err:
+                app.state.logger.warning(f"Failed to update Prometheus metrics: {prom_err}")
 
     except asyncio.CancelledError:
         app.state.logger.info("Kafka writer loop cancelled cleanly.")
@@ -249,6 +253,12 @@ async def lifespan(app: FastAPI):
         app.state.logger.info(f'Registered Gateway as {app.state.gateway_id}')
     except Exception as e:
         app.state.logger.error(f"Failed to register gateway at startup: {e}")
+
+    gateway_metrics.BUILD_INFO.info({
+        "version": os.environ.get('APPLICATION_VERSION', 'UNKNOWN'),
+        "swarm_node": os.environ.get('NODE_HOSTNAME', 'unknown'),
+        "gateway": app.state.gateway_id
+    })
 
     # Create global producer
     app.state.logger.info("Starting Kafka Producer")
@@ -311,7 +321,7 @@ app.state.http_client = httpx.AsyncClient(timeout=10.0)
 app.state.queue = asyncio.Queue(maxsize=KAFKA_QUEUE_MAXSIZE)
 
 # Expose Prometheus metrics
-app.get("/metrics")(metrics_endpoint)
+app.get("/metrics")(gateway_metrics.metrics_endpoint)
 
 # Endpoints router
 app.include_router(api_router)

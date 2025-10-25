@@ -25,6 +25,7 @@
 #   docker stack rm opcua-connector
 #
 # Environment variables:
+#   NODE_HOSTNAME            Hostname of the Docker swarm host (default {{.Node.Hostname}})
 #   COORDINATOR_URL          URL of the coordinator (default: http://opcua-coordinator:8000)
 #   KAFKA_BROKER             Kafka bootstrap server (required)
 #   KSQLDB_URL               ksqlDB URL (required)
@@ -41,6 +42,7 @@ services:
   opcua-gateway:
     image: ghcr.io/openfactoryio/opcua-gateway
     environment:
+      - NODE_HOSTNAME={{.Node.Hostname}}
       - COORDINATOR_URL=http://opcua-coordinator:8000
       - KAFKA_BROKER=${KAFKA_BROKER}
       - KSQLDB_URL=${KSQLDB_URL}

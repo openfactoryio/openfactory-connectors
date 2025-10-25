@@ -1,9 +1,14 @@
-from prometheus_client import Histogram, Gauge, Counter
+from prometheus_client import Info, Histogram, Gauge, Counter
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from fastapi import Response
 
 
 # Metrics definitions
+BUILD_INFO = Info(
+    "opcua_gateway_build",
+    "Build information for the OPCUA gateway"
+)
+
 EVENT_LOOP_LAG = Gauge(
     "event_loop_lag_seconds",
     "AsyncIO event loop lag",
@@ -16,15 +21,21 @@ MSG_SENT = Counter(
     ["gateway"]
 )
 
-MSG_QUEUE = Gauge(
-    "opcua_messages_queue",
-    "Current number of messages in the internal async queue awaiting Kafka send",
+BATCH_SIZE = Gauge(
+    "opcua_batch_size",
+    "Number of messages in none empty batch",
+    ["gateway"]
+)
+
+BATCH_PROCESSED = Counter(
+    "opcua_batches_processed_total",
+    "Total batches processed (including empty ones)",
     ["gateway"]
 )
 
 KAFKA_BATCH_PROCESSING_DURATION = Histogram(
-    "kafka_batch_processing_duration_seconds",
-    "Time spent draining the queue and sending a batch of messages to Kafka",
+    "opcua_batch_processing_duration_seconds",
+    "Time spent draining the queue and sending a none-empty batch of messages to Kafka",
     ["gateway"],
     buckets=(0.0005, 0.001, 0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, float("inf")),
 )
