@@ -25,7 +25,6 @@ import time
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from typing import Optional
-from datetime import datetime, timezone
 from openfactory.kafka import KSQLDBClient
 from openfactory.schemas.devices import Device
 from .registration import register_gateway
@@ -34,7 +33,7 @@ from .utils import setup_logging
 from .config import OPCUA_GATEWAY_PORT, LOG_LEVEL, KAFKA_SEND_INTERVAL_MS, KAFKA_QUEUE_MAXSIZE
 from .state import _active_device_defs, _active_tasks
 from .monitor import monitor_device
-from .gateway_metrics import EVENT_LOOP_LAG, MSG_QUEUE, SEND_LATENCY, metrics_endpoint
+from .gateway_metrics import EVENT_LOOP_LAG, MSG_QUEUE, MSG_SENT, KAFKA_BATCH_PROCESSING_DURATION, metrics_endpoint
 from .producer import GlobalAssetProducer
 
 
@@ -188,8 +187,15 @@ async def _kafka_writer_loop_async(app: FastAPI, batch_interval: float = 0.005) 
     """
     try:
         while True:
+            sleep_start = time.perf_counter()
             await asyncio.sleep(batch_interval)
+            loop_lag = max(0.0, time.perf_counter() - sleep_start - batch_interval)
+            try:
+                EVENT_LOOP_LAG.labels(gateway=app.state.gateway_id).set(loop_lag)
+            except Exception as gauge_err:
+                app.state.logger.warning(f"Failed to update Prometheus EVENT_LOOP_LAG gauge: {gauge_err}")
 
+            batch_start = time.perf_counter()
             batch = []
             MSG_QUEUE.labels(gateway=app.state.gateway_id).set(app.state.queue.qsize())
 
@@ -204,41 +210,23 @@ async def _kafka_writer_loop_async(app: FastAPI, batch_interval: float = 0.005) 
                 continue
 
             # Send all messages in one tight loop
-            now_utc = datetime.now(timezone.utc)
             for msg in batch:
                 try:
                     app.state.global_producer.send(
                         asset_uuid=msg["asset_uuid"],
                         asset_attribute=msg["asset_attribute"],
                     )
-                    latency = (now_utc - msg["device_timestamp"]).total_seconds()
-                    SEND_LATENCY.labels(gateway=app.state.gateway_id).observe(latency)
                 except Exception as e:
                     app.state.logger.warning(f"Kafka send failed: {e}", exc_info=True)
                 finally:
                     app.state.queue.task_done()
 
+            duration = time.perf_counter() - batch_start
+            KAFKA_BATCH_PROCESSING_DURATION.labels(gateway=app.state.gateway_id).observe(duration)
+            MSG_SENT.labels(gateway=app.state.gateway_id).inc(len(batch))
+
     except asyncio.CancelledError:
         app.state.logger.info("Kafka writer loop cancelled cleanly.")
-
-
-async def _aysncio_event_loop_monitor() -> None:
-    """
-    Monitor the asyncio event loop lag and report it.
-
-    Periodically measures how much the event loop is delayed compared to
-    the expected sleep interval. Updates the Prometheus gauge `EVENT_LOOP_LAG`.
-
-    This task is intended to run as a background task and should never block.
-    """
-    while True:
-        start = time.perf_counter()
-        await asyncio.sleep(1)
-        lag = time.perf_counter() - start - 1
-        try:
-            EVENT_LOOP_LAG.labels(gateway=app.state.gateway_id).set(lag)
-        except Exception as gauge_err:
-            app.state.logger.warning(f"Failed to update Prometheus EVENT_LOOP_LAG gauge: {gauge_err}")
 
 
 @asynccontextmanager
@@ -283,28 +271,10 @@ async def lifespan(app: FastAPI):
     # Rebuild local in-memory state before starting anything
     await rebuild_gateway_state(app)
 
-    # Start asyncio event loop monitor
-    app.state.logger.info("Starting asyncio event loop monitor task.")
-    loop_monitor_task = asyncio.create_task(
-        _aysncio_event_loop_monitor()
-    )
-    loop_monitor_task.add_done_callback(
-        lambda t: log_task_exceptions(t, "_aysncio_event_loop_monitor")
-    )
-    app.state._aysncio_event_loop_monitor_task = loop_monitor_task
-
     yield  # <-- control returns to FastAPI while the app is running
 
     # App shutdown logic
     app.state.logger.info("Shutting down OPC UA Gateway ...")
-
-    # Stop asyncio event loop monitor
-    if hasattr(app.state, "_aysncio_event_loop_monitor_task"):
-        app.state._aysncio_event_loop_monitor_task.cancel()
-        try:
-            await app.state._aysncio_event_loop_monitor_task
-        except asyncio.CancelledError:
-            app.state.logger.info("asyncio event loop monitor task stopped cleanly.")
 
     # Stop poll thread
     if hasattr(app.state, "_kafka_poll_task"):

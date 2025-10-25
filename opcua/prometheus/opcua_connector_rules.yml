@@ -36,45 +36,45 @@ groups:
           component: "opcua_connector"
           role: "gateway"
 
-      # Average latency per gateway in seconds
-      - record: gateway:opcua_kafka_latency_avg
-        expr: sum(rate(opcua_kafka_send_latency_seconds_sum[1m])) by (gateway)
+      # Average batch processing duration per gateway (seconds)
+      - record: gateway:kafka_batch_processing_duration_avg
+        expr: sum(rate(kafka_batch_processing_duration_seconds_sum[1m])) by (gateway)
               /
-              sum(rate(opcua_kafka_send_latency_seconds_count[1m])) by (gateway)
+              sum(rate(kafka_batch_processing_duration_seconds_count[1m])) by (gateway)
         labels:
           component: "opcua_connector"
           role: "gateway"
 
-      # 95th percentile latency per gateway
-      - record: gateway:opcua_kafka_latency_p95
+      # 95th percentile batch processing duration per gateway
+      - record: gateway:kafka_batch_processing_duration_p95
         expr: histogram_quantile(
                 0.95,
-                sum(rate(opcua_kafka_send_latency_seconds_bucket[1m])) by (le, gateway)
+                sum(rate(kafka_batch_processing_duration_seconds_bucket[1m])) by (le, gateway)
               )
         labels:
           component: "opcua_connector"
           role: "gateway"
 
-      # 99th percentile latency per gateway
-      - record: gateway:opcua_kafka_latency_p99
+      # 99th percentile batch processing duration per gateway
+      - record: gateway:kafka_batch_processing_duration_p99
         expr: histogram_quantile(
                 0.99,
-                sum(rate(opcua_kafka_send_latency_seconds_bucket[1m])) by (le, gateway)
+                sum(rate(kafka_batch_processing_duration_seconds_bucket[1m])) by (le, gateway)
               )
         labels:
           component: "opcua_connector"
           role: "gateway"
 
-      # Average receive latency per gateway
-      - record: gateway:opcua_receive_latency_avg
-        expr: avg_over_time(opcua_delivery_latency_seconds[1m]) by (gateway)
+      # Average internal async queue size per gateway
+      - record: gateway:opcua_queue_size_avg
+        expr: avg(opcua_messages_queue) by (gateway)
         labels:
           component: "opcua_connector"
           role: "gateway"
 
-      # Average size of internal async queue
-      - record: gateway:opcua_queue_size_avg
-        expr: avg(opcua_messages_queue) by (gateway)
+      # Event loop lag per gateway
+      - record: gateway:event_loop_lag_avg
+        expr: avg(event_loop_lag_seconds) by (gateway)
         labels:
           component: "opcua_connector"
           role: "gateway"

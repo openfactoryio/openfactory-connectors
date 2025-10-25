@@ -22,17 +22,11 @@ MSG_QUEUE = Gauge(
     ["gateway"]
 )
 
-RECIEVE_LATENCY = Gauge(
-    "opcua_delivery_latency_seconds",
-    "Time difference between the OPC UA device timestamp and when the gateway receives the value (seconds)",
-    ["gateway"]
-)
-
-SEND_LATENCY = Histogram(
-    "opcua_kafka_send_latency_seconds",
-    "Time difference between OPC UA data timestamp and Kafka send time (seconds)",
+KAFKA_BATCH_PROCESSING_DURATION = Histogram(
+    "kafka_batch_processing_duration_seconds",
+    "Time spent draining the queue and sending a batch of messages to Kafka",
     ["gateway"],
-    buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.5, 1)
+    buckets=(0.0005, 0.001, 0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, float("inf")),
 )
 
 

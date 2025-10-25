@@ -16,11 +16,9 @@ from numbers import Number
 from typing import Any
 from asyncua import ua
 from asyncua.common.node import Node
-from datetime import datetime, timezone
 from openfactory.assets import AssetAttribute
 from openfactory.assets.utils import openfactory_timestamp
 from .utils import opcua_data_timestamp, opcua_event_timestamp
-from .gateway_metrics import MSG_SENT, RECIEVE_LATENCY
 
 
 class SubscriptionHandler:
@@ -118,12 +116,6 @@ class SubscriptionHandler:
             self.logger.error(f"Failed to enqueue data for {self.opcua_device_uuid}: {e}")
             return
 
-        # Measure latency (seconds)
-        latency = (datetime.now(timezone.utc) - device_timestamp).total_seconds()
-        MSG_SENT.labels(gateway=self.gateway_id).inc()
-        if latency >= 0:  # ignore clock skew issues
-            RECIEVE_LATENCY.labels(gateway=self.gateway_id).set(latency)
-
     async def event_notification(self, event: Any) -> None:
         """
         Handle OPC UA event notifications.
@@ -183,9 +175,3 @@ class SubscriptionHandler:
         except Exception as e:
             self.logger.error(f"Failed to enqueue event for {self.opcua_device_uuid}: {e}")
             return
-
-        # Measure latency (seconds)
-        latency = (datetime.now(timezone.utc) - device_timestamp).total_seconds()
-        MSG_SENT.labels(gateway=self.gateway_id).inc()
-        if latency >= 0:  # ignore clock skew issues
-            RECIEVE_LATENCY.labels(gateway=self.gateway_id).set(latency)
