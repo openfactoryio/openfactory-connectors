@@ -55,6 +55,7 @@ services:
   opcua-coordinator:
     image: ghcr.io/openfactoryio/opcua-coordinator
     environment:
+      - NODE_HOSTNAME={{.Node.Hostname}}
       - KAFKA_BROKER=${KAFKA_BROKER}
       - KSQLDB_URL=${KSQLDB_URL}
     ports:
