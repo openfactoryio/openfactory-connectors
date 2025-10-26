@@ -1,11 +1,16 @@
 import logging
-from prometheus_client import Gauge, Counter, Histogram
+from prometheus_client import Info, Gauge, Counter, Histogram
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from fastapi import Response, HTTPException
 
 logger = logging.getLogger(__name__)
 
 # Metrics definitions
+BUILD_INFO = Info(
+    "opcua_coordinator_build",
+    "Build information for the OPCUA Coordinator"
+)
+
 GATEWAY_DEVICE_COUNT = Gauge(
     'opcua_gateway_devices_count',
     'Number of devices currently assigned to a OPCUA Gateway',
