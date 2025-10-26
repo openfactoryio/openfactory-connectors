@@ -348,6 +348,12 @@ app = FastAPI(title="OPCUA Coordinator",
               version=os.environ.get('APPLICATION_VERSION'),
               lifespan=lifespan)
 
+# Coordinator build info metrics
+coordinator_metrics.BUILD_INFO.info({
+    "version": os.environ.get('APPLICATION_VERSION', 'UNKNOWN'),
+    "swarm_node": os.environ.get('NODE_HOSTNAME', 'unknown'),
+})
+
 # Expose Prometheus metrics
 app.get("/metrics")(coordinator_metrics.metrics_endpoint)
 

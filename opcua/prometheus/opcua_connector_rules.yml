@@ -96,6 +96,13 @@ groups:
   - name: opcua_connector_coordinator_metrics
     interval: 15s
     rules:
+      # Build info per coordinator
+      - record: coordinator:opcua_build_info
+        expr: opcua_coordinator_build_info
+        labels:
+          component: "opcua_connector"
+          role: "coordinator"
+
       # Total devices across all gateways
       - record: coordinator:total_devices
         expr: sum(opcua_gateway_devices_count)
