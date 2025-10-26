@@ -153,7 +153,7 @@ async def rebuild_gateway_state(app: FastAPI) -> None:
         logger.error(f"❌ Error rebuilding gateway state for {gateway_id}: {e}")
 
 
-async def _kafka_poll_loop_async(app: FastAPI, interval=0.1):
+async def _kafka_poll_loop_async(app: FastAPI, interval=1):
     """
     Continuously poll the Kafka producer in an asynchronous loop to clear delivery reports
     and prevent the internal queue from filling up.
@@ -162,7 +162,7 @@ async def _kafka_poll_loop_async(app: FastAPI, interval=0.1):
 
     Args:
         app (FastAPI): The FastAPI application instance used to access shared state.
-        interval (float, optional): Number of seconds to sleep between poll calls. Defaults to 0.1.
+        interval (float, optional): Number of seconds to sleep between poll calls. Defaults to 1.
 
     Raises:
         asyncio.CancelledError: Raised when the task is cancelled, after which remaining
@@ -170,8 +170,14 @@ async def _kafka_poll_loop_async(app: FastAPI, interval=0.1):
     """
     try:
         while True:
-            app.state.global_producer.poll(0)  # non-blocking
+            app.state.global_producer.poll(0)
+            sleep_start = time.perf_counter()
             await asyncio.sleep(interval)
+            loop_lag = max(0.0, time.perf_counter() - sleep_start - interval)
+            try:
+                gateway_metrics.EVENT_LOOP_LAG.labels(gateway=app.state.gateway_id).observe(loop_lag)
+            except Exception as prom_err:
+                app.state.logger.warning(f"Failed to update Prometheus EVENT_LOOP_LAG: {prom_err}")
     except asyncio.CancelledError:
         app.state.global_producer.flush(5)
         app.state.info("Kafka poll loop task cancelled cleanly.")
@@ -187,14 +193,11 @@ async def _kafka_writer_loop_async(app: FastAPI, batch_interval: float = 0.005) 
     """
     try:
         while True:
-            sleep_start = time.perf_counter()
             await asyncio.sleep(batch_interval)
-            loop_lag = max(0.0, time.perf_counter() - sleep_start - batch_interval)
             try:
-                gateway_metrics.EVENT_LOOP_LAG.labels(gateway=app.state.gateway_id).set(loop_lag)
                 gateway_metrics.BATCH_PROCESSED.labels(gateway=app.state.gateway_id).inc()
             except Exception as prom_err:
-                app.state.logger.warning(f"Failed to update Prometheus EVENT_LOOP_LAG / BATCH_PROCESSED: {prom_err}")
+                app.state.logger.warning(f"Failed to update Prometheus BATCH_PROCESSED: {prom_err}")
 
             batch_start = time.perf_counter()
             batch = []

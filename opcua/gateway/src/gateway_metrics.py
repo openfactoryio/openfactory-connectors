@@ -9,10 +9,11 @@ BUILD_INFO = Info(
     "Build information for the OPCUA Gateway"
 )
 
-EVENT_LOOP_LAG = Gauge(
+EVENT_LOOP_LAG = Histogram(
     "event_loop_lag_seconds",
     "AsyncIO event loop lag",
-    ["gateway"]
+    ["gateway"],
+    buckets=(0.0001, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, float("inf")),
 )
 
 MSG_SENT = Counter(
