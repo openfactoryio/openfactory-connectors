@@ -328,6 +328,7 @@ async def lifespan(app: FastAPI):
         # Update coordinator availability before shutting down
         try:
             coordinator.add_attribute(AssetAttribute(id='avail', value="UNAVAILABLE", tag="Availability", type="Events"))
+            coordinator.close()
             logger.info("Coordinator marked UNAVAILABLE")
         except Exception as e:
             logger.error(f"Failed to mark coordinator UNAVAILABLE: {e}")
@@ -412,6 +413,7 @@ async def register_gateway(req: RegisterGatewayRequest):
             gateway.add_attribute(AssetAttribute(id='application_manufacturer', value='OpenFactoryIO', type='Events', tag='Application.Manufacturer'))
             gateway.add_attribute(AssetAttribute(id='application_license', value='Polyform Noncommercial License 1.0.0', type='Events', tag='Application.License'))
             gateway.add_attribute(AssetAttribute(id='application_version', value=os.environ.get('APPLICATION_VERSION'), type='Events', tag='Application.Version'))
+            gateway.close()
 
             logger.info(f"✅ Registered new gateway {gateway_id} ({gateway_host})")
 
@@ -515,6 +517,7 @@ async def register_device(req: RegisterDeviceRequest):
                         type='Events',
                         tag='ProducerURI'
                     ))
+                    producer.close()
                     logger.info(f"✅ Producer registered for {device_uuid}")
                 except Exception as e:
                     logger.error(f"❌ Failed to register producer for {device_uuid}: {e}")

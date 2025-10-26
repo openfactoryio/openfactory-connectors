@@ -28,3 +28,4 @@ print("Running ...")
 asset.subscribe_to_samples(on_sample)
 
 time.sleep(10)
+asset.close()
