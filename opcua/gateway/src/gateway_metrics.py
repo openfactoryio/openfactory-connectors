@@ -6,7 +6,7 @@ from fastapi import Response
 # Metrics definitions
 BUILD_INFO = Info(
     "opcua_gateway_build",
-    "Build information for the OPCUA gateway"
+    "Build information for the OPCUA Gateway"
 )
 
 EVENT_LOOP_LAG = Gauge(
