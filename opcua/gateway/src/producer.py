@@ -16,6 +16,7 @@ import json
 from confluent_kafka import Producer
 from openfactory.assets import AssetAttribute
 from openfactory.kafka import KSQLDBClient
+from .config import KAFKA_LINGER_MS
 
 
 class GlobalAssetProducer(Producer):
@@ -44,7 +45,7 @@ class GlobalAssetProducer(Producer):
         super().__init__(
             {
                 'bootstrap.servers': bootstrap_servers,
-                'linger.ms': int(os.getenv("KAFKA_LINGER_MS", "5")),
+                'linger.ms': KAFKA_LINGER_MS,
                 'acks': 0,                                             # fire-and-forget: broker won't send ACK
                 'retries': 0,                                          # don't retry on errors
             }

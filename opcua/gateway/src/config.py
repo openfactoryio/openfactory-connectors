@@ -20,6 +20,9 @@ import os
 KAFKA_BROKER = os.getenv("KAFKA_BROKER")
 KSQLDB_URL = os.getenv("KSQLDB_URL")
 
+# Kafka producer
+KAFKA_LINGER_MS = int(os.getenv("KAFKA_LINGER_MS", "5"))
+
 # Connector configuration
 COORDINATOR_URL = os.getenv("COORDINATOR_URL")
 OPCUA_GATEWAY_PORT = int(os.getenv("OPCUA_GATEWAY_PORT", 8000))
