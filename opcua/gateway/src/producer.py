@@ -54,22 +54,37 @@ class GlobalAssetProducer(Producer):
         self.topic = self.ksql.get_kafka_topic("ASSETS_STREAM")
         self._initialized = True
 
-    def send(self, asset_uuid: str, asset_attribute: AssetAttribute) -> None:
+    def send(self, asset_uuid: str, asset_attribute: AssetAttribute, ingestion_timestamp: str | None = None) -> None:
         """
         Send a Kafka message for the given asset and attribute.
 
         Args:
             asset_uuid (str): UUID of the asset.
             asset_attribute (AssetAttribute): Attribute data to send.
+            ingestion_timestamp (str, optional): Timestamp at ingestion time.
 
         Returns:
             None
         """
-        msg = {
-            "ID": asset_attribute.id,
-            "VALUE": asset_attribute.value,
-            "TAG": asset_attribute.tag,
-            "TYPE": asset_attribute.type,
-            "attributes": {"timestamp": asset_attribute.timestamp}
-        }
+        if ingestion_timestamp:
+            msg = {
+                "ID": asset_attribute.id,
+                "VALUE": asset_attribute.value,
+                "TAG": asset_attribute.tag,
+                "TYPE": asset_attribute.type,
+                "attributes": {
+                    "timestamp": asset_attribute.timestamp,
+                    "ingestion_timestamp": ingestion_timestamp,
+                    },
+            }
+        else:
+            msg = {
+                "ID": asset_attribute.id,
+                "VALUE": asset_attribute.value,
+                "TAG": asset_attribute.tag,
+                "TYPE": asset_attribute.type,
+                "attributes": {
+                    "timestamp": asset_attribute.timestamp,
+                    },
+            }
         self.produce(topic=self.topic, key=asset_uuid, value=json.dumps(msg))

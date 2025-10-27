@@ -17,7 +17,7 @@ from typing import Any
 from asyncua import ua
 from asyncua.common.node import Node
 from openfactory.assets import AssetAttribute
-from openfactory.assets.utils import openfactory_timestamp
+from openfactory.assets.utils import openfactory_timestamp, current_timestamp
 from .utils import opcua_data_timestamp, opcua_event_timestamp
 
 
@@ -108,6 +108,7 @@ class SubscriptionHandler:
                 timestamp=openfactory_timestamp(device_timestamp),
             ),
             "device_timestamp": device_timestamp,
+            "ingestion_timestamp": current_timestamp(),
         }
 
         try:

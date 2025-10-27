@@ -218,6 +218,7 @@ async def _kafka_writer_loop_async(app: FastAPI, batch_interval: float = 0.005) 
                     app.state.global_producer.send(
                         asset_uuid=msg["asset_uuid"],
                         asset_attribute=msg["asset_attribute"],
+                        ingestion_timestamp=msg["ingestion_timestamp"],
                     )
                 except Exception as e:
                     app.state.logger.warning(f"Kafka send failed: {e}", exc_info=True)
