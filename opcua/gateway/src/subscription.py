@@ -169,6 +169,7 @@ class SubscriptionHandler:
                 timestamp=openfactory_timestamp(device_timestamp),
             ),
             "device_timestamp": device_timestamp,
+            "ingestion_timestamp": current_timestamp(),
         }
 
         try:
