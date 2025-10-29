@@ -30,7 +30,7 @@ from openfactory.schemas.devices import Device
 from .registration import register_gateway
 from .api import router as api_router
 from .utils import setup_logging
-from .config import OPCUA_GATEWAY_PORT, LOG_LEVEL, KAFKA_SEND_INTERVAL_MS, KAFKA_QUEUE_MAXSIZE
+from .config import OPCUA_GATEWAY_PORT, LOG_LEVEL, KAFKA_QUEUE_MAXSIZE
 from .state import _active_device_defs, _active_tasks
 from .monitor import monitor_device
 from .producer import GlobalAssetProducer
@@ -153,7 +153,7 @@ async def rebuild_gateway_state(app: FastAPI) -> None:
         logger.error(f"❌ Error rebuilding gateway state for {gateway_id}: {e}")
 
 
-async def _kafka_poll_loop_async(app: FastAPI, interval=1):
+async def _kafka_poll_loop_async(app: FastAPI, interval=0.2):
     """
     Continuously poll the Kafka producer in an asynchronous loop to clear delivery reports
     and prevent the internal queue from filling up.
@@ -183,53 +183,36 @@ async def _kafka_poll_loop_async(app: FastAPI, interval=1):
         app.state.info("Kafka poll loop task cancelled cleanly.")
 
 
-async def _kafka_writer_loop_async(app: FastAPI, batch_interval: float = 0.005) -> None:
+async def _kafka_writer_loop_async(app: FastAPI) -> None:
     """
     Periodically drain the queue and send messages to Kafka in bursts.
 
     Args:
         app (FastAPI): The FastAPI application instance used to access shared state.
-        batch_interval (float): Time interval (in seconds) between flushes. Defaults to 0.005.
     """
     try:
         while True:
-            await asyncio.sleep(batch_interval)
+
+            msg = await app.state.queue.get()
+
+            if msg is None:
+                app.state.queue.task_done()
+                break
+
             try:
-                gateway_metrics.BATCH_PROCESSED.labels(gateway=app.state.gateway_id).inc()
-            except Exception as prom_err:
-                app.state.logger.warning(f"Failed to update Prometheus BATCH_PROCESSED: {prom_err}")
+                app.state.global_producer.send(
+                    asset_uuid=msg["asset_uuid"],
+                    asset_attribute=msg["asset_attribute"],
+                    ingestion_timestamp=msg["ingestion_timestamp"],
+                )
+            except Exception as e:
+                app.state.logger.warning(f"Kafka send failed: {e}", exc_info=True)
+            finally:
+                app.state.queue.task_done()
 
-            batch_start = time.perf_counter()
-            batch = []
-
-            # Drain as many messages as are available without blocking
-            while not app.state.queue.empty():
-                try:
-                    batch.append(app.state.queue.get_nowait())
-                except asyncio.QueueEmpty:
-                    break
-
-            if not batch:
-                continue
-
-            # Send all messages in one tight loop
-            for msg in batch:
-                try:
-                    app.state.global_producer.send(
-                        asset_uuid=msg["asset_uuid"],
-                        asset_attribute=msg["asset_attribute"],
-                        ingestion_timestamp=msg["ingestion_timestamp"],
-                    )
-                except Exception as e:
-                    app.state.logger.warning(f"Kafka send failed: {e}", exc_info=True)
-                finally:
-                    app.state.queue.task_done()
-
-            duration = time.perf_counter() - batch_start
             try:
-                gateway_metrics.KAFKA_BATCH_PROCESSING_DURATION.labels(gateway=app.state.gateway_id).observe(duration)
-                gateway_metrics.BATCH_SIZE.labels(gateway=app.state.gateway_id).set(len(batch))
-                gateway_metrics.MSG_SENT.labels(gateway=app.state.gateway_id).inc(len(batch))
+                gateway_metrics.MSG_SENT.labels(gateway=app.state.gateway_id).inc()
+                gateway_metrics.QUEUE_SIZE.labels(gateway=app.state.gateway_id).set(app.state.queue.qsize())
             except Exception as prom_err:
                 app.state.logger.warning(f"Failed to update Prometheus metrics: {prom_err}")
 
@@ -278,7 +261,7 @@ async def lifespan(app: FastAPI):
 
     # Start Kafka writer loop
     app.state.logger.info("Starting Kafka Producer writer loop.")
-    writer_task = asyncio.create_task(_kafka_writer_loop_async(app, KAFKA_SEND_INTERVAL_MS/1000.0))
+    writer_task = asyncio.create_task(_kafka_writer_loop_async(app))
     writer_task.add_done_callback(lambda t: log_task_exceptions(t, "_kafka_writer_loop_async"))
     app.state._kafka_writer_task = writer_task
 

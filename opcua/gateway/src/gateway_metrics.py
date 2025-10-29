@@ -10,7 +10,7 @@ BUILD_INFO = Info(
 )
 
 EVENT_LOOP_LAG = Histogram(
-    "event_loop_lag_seconds",
+    "opcua_event_loop_lag_seconds",
     "AsyncIO event loop lag",
     ["gateway"],
     buckets=(0.0001, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, float("inf")),
@@ -22,23 +22,10 @@ MSG_SENT = Counter(
     ["gateway"]
 )
 
-BATCH_SIZE = Gauge(
-    "opcua_batch_size",
-    "Number of messages in none empty batch",
+QUEUE_SIZE = Gauge(
+    "opcua_queue_size",
+    "Number of messages in internal queue",
     ["gateway"]
-)
-
-BATCH_PROCESSED = Counter(
-    "opcua_batches_processed_total",
-    "Total batches processed (including empty ones)",
-    ["gateway"]
-)
-
-KAFKA_BATCH_PROCESSING_DURATION = Histogram(
-    "opcua_batch_processing_duration_seconds",
-    "Time spent draining the queue and sending a none-empty batch of messages to Kafka",
-    ["gateway"],
-    buckets=(0.0005, 0.001, 0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, float("inf")),
 )
 
 
