@@ -52,9 +52,9 @@ groups:
 
       # Event loop lag per gateway
       - record: gateway:event_loop_lag_avg
-        expr: rate(opcua_event_loop_lag_seconds_sum[1m])
+        expr: sum(rate(opcua_event_loop_lag_seconds_sum[1m])) by (gateway)
               /
-              rate(opcua_event_loop_lag_seconds_count[1m])
+              sum(rate(opcua_event_loop_lag_seconds_count[1m])) by (gateway)
         labels:
           component: "opcua_connector"
           role: "gateway"
@@ -63,7 +63,7 @@ groups:
       - record: gateway:event_loop_lag_p95
         expr: histogram_quantile(
                 0.95,
-                sum(rate(opcua_event_loop_lag_seconds_bucket[1m])) by (le)
+                sum(rate(opcua_event_loop_lag_seconds_bucket[1m])) by (gateway, le)
               )
         labels:
           component: "opcua_connector"
@@ -73,7 +73,7 @@ groups:
       - record: gateway:event_loop_lag_p99
         expr: histogram_quantile(
                 0.99,
-                sum(rate(opcua_event_loop_lag_seconds_bucket[1m])) by (le)
+                sum(rate(opcua_event_loop_lag_seconds_bucket[1m])) by (gateway, le)
               )
         labels:
           component: "opcua_connector"
