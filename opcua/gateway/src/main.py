@@ -168,9 +168,26 @@ async def _kafka_poll_loop_async(app: FastAPI, interval=0.2):
         asyncio.CancelledError: Raised when the task is cancelled, after which remaining
             messages are flushed and the task exits cleanly.
     """
+    loop = asyncio.get_running_loop()
+
     try:
         while True:
             app.state.global_producer.poll(0)
+            enqueue_time = time.perf_counter()
+
+            def callback():
+                start_time = time.perf_counter()
+                delay_sec = start_time - enqueue_time
+                try:
+                    gateway_metrics.EVENT_LOOP_SCHEDULING_DELAY.labels(gateway=app.state.gateway_id).observe(delay_sec)
+                except Exception as prom_err:
+                    app.state.logger.warning(
+                        f"Failed to update Prometheus EVENT_LOOP_SCHEDULING_DELAY: {prom_err}"
+                    )
+
+            # Mimic OPC UA callback scheduling
+            loop.call_soon(callback)
+
             sleep_start = time.perf_counter()
             await asyncio.sleep(interval)
             loop_lag = max(0.0, time.perf_counter() - sleep_start - interval)

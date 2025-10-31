@@ -79,6 +79,35 @@ groups:
           component: "opcua_connector"
           role: "gateway"
 
+      # Event loop scheduling delay per gateway
+      - record: gateway:event_scheduling_delay_avg
+        expr: sum(rate(opcua_event_loop_scheduling_delay_seconds_sum[1m])) by (gateway)
+              /
+              sum(rate(opcua_event_loop_scheduling_delay_seconds_count[1m])) by (gateway)
+        labels:
+          component: "opcua_connector"
+          role: "gateway"
+
+      # 95th percentile event loop scheduling delay per gateway
+      - record: gateway:event_loop_scheduling_delay_p95
+        expr: histogram_quantile(
+                0.95,
+                sum(rate(opcua_event_loop_scheduling_delay_seconds_bucket[1m])) by (gateway, le)
+              )
+        labels:
+          component: "opcua_connector"
+          role: "gateway"
+
+      # 99th percentile event loop scheduling delay per gateway
+      - record: gateway:event_loop_scheduling_delay_p99
+        expr: histogram_quantile(
+                0.99,
+                sum(rate(opcua_event_loop_scheduling_delay_seconds_bucket[1m])) by (gateway, le)
+              )
+        labels:
+          component: "opcua_connector"
+          role: "gateway"
+
   - name: opcua_connector_coordinator_metrics
     interval: 15s
     rules:

@@ -16,6 +16,13 @@ EVENT_LOOP_LAG = Histogram(
     buckets=(0.0001, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, float("inf")),
 )
 
+EVENT_LOOP_SCHEDULING_DELAY = Histogram(
+    "opcua_event_loop_scheduling_delay_seconds",
+    "Time between enqueue and actual execution of a task in the event loop",
+    buckets=(0.0001, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, float("inf")),
+    labelnames=("gateway",),
+)
+
 MSG_SENT = Counter(
     "opcua_messages_sent_total",
     "Total messages sent to Kafka",
