@@ -52,6 +52,7 @@ class SubscriptionHandler:
         self.gateway_id = app.state.gateway_id
         self.queue = app.state.queue
         self.client = opcua_client
+        self.last_val = None
 
         # Cache mapping: Node -> {"local_name": str, "browse_name": str}
         self.node_map: dict = {}
@@ -82,12 +83,14 @@ class SubscriptionHandler:
         info = self.node_map.get(node, {})
         local_name = info.get("local_name", "<unknown>")
         tag = info.get("tag", "<unknown>")
-
-        # Extract DataValue
-        data_value: ua.DataValue = data.monitored_item.Value
+        deadband = info.get("deadband", 0)
+        self.logger.info(f"deadband={deadband}")
 
         # Determine OpenFactory type based on value type
         ofa_type = "Samples" if isinstance(val, Number) else "Events"
+
+        # Extract DataValue
+        data_value: ua.DataValue = data.monitored_item.Value
 
         # check status
         if not data_value.StatusCode.is_good():
@@ -95,6 +98,12 @@ class SubscriptionHandler:
                 f"Received bad or uncertain value for {local_name} ({tag}): StatusCode={data_value.StatusCode}"
             )
             val = "UNAVAILABLE"
+
+        # verify deadband
+        if ofa_type == "Samples" and val != "UNAVAILABLE":
+            if self.last_val is not None and abs(val - float(self.last_val)) < deadband:
+                return
+            self.last_val = val
 
         self.logger.debug(f"DataChange: {local_name}:({tag}) -> {val}")
 
