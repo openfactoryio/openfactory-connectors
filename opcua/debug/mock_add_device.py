@@ -6,6 +6,7 @@ Simple script to add devices to an OPCUA-Gateway for debugging.
 - Sends registration request to the Gateway API
 """
 
+import os
 import requests
 from openfactory.schemas.uns import UNSSchema
 from openfactory.schemas.devices import get_devices_from_config_file
@@ -14,9 +15,10 @@ from openfactory.schemas.devices import get_devices_from_config_file
 # ----------------------------
 # CONFIG
 # ----------------------------
+host_ip = os.getenv("CONTAINER_IP")
 uns_config = "uns.yml"
 yaml_file = "device.yml"
-gateway_url = "http://localhost:8000"
+gateway_url = f"http://{host_ip}:8001"
 
 # ----------------------------
 # Load & validate devices
