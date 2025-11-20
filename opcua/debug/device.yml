@@ -1,5 +1,7 @@
 # OpenFactory Device Configuration File
 # To be used in the Dev Container of this repo
+# Deploy virtual sensors like so:
+# docker run -d --name virtual-opcua-sensor -p 4840:4840 -e NUM_SENSORS=2 ghcr.io/openfactoryio/virtual-opcua-sensor
 
 devices:
 
@@ -14,22 +16,25 @@ devices:
 
       server:
         uri: opc.tcp://${CONTAINER_IP}:4840/freeopcuas/server/
-        namespace_uri: http://examples.openfactory.local/opcua
         subscription:
           publishing_interval: 10           # ms, for subscription object
           queue_size: 1                     # default per monitored item
           sampling_interval: 0              # ms, 0 = event-driven
 
-      device:
-        path: Sensors/TemperatureSensor1
+      variables:
+        temp:
+          node_id: ns=2;i=4
+          tag: Temperature
+        hum:
+          node_id: ns=2;i=5
+          tag: Humidity
+        sensor_model: 
+          node_id: ns=2;i=3
+          tag: SensorModel
 
-        variables:
-          temp: Temperature
-          hum: Humidity
-          sensor_model: SensorModel
-
-        methods:
-          calibrate: Calibrate
+      events:
+        sensor_events:
+          node_id: ns=2;i=2
 
   opcua_sensor2:
     uuid: OPCUA-SENSOR-002
@@ -42,19 +47,22 @@ devices:
 
       server:
         uri: opc.tcp://${CONTAINER_IP}:4840/freeopcuas/server/
-        namespace_uri: http://examples.openfactory.local/opcua
         subscription:
           publishing_interval: 10           # ms, for subscription object
           queue_size: 1                     # default per monitored item
           sampling_interval: 0              # ms, 0 = event-driven
 
-      device:
-        path: Sensors/TemperatureSensor2
+      variables:
+        temp:
+          node_id: ns=2;i=10
+          tag: Temperature
+        hum:
+          node_id: ns=2;i=11
+          tag: Humidity
+        sensor_model: 
+          node_id: ns=2;i=9
+          tag: SensorModel
 
-        variables:
-          temp: Temperature
-          hum: Humidity
-          sensor_model: SensorModel
-
-        methods:
-          calibrate: Calibrate
+      events:
+        sensor_events:
+          node_id: ns=2;i=8

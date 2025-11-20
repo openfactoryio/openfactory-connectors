@@ -19,6 +19,8 @@ services:
     image: openfactoryio/opcua-gateway
     container_name: opcua-gateway
     restart: unless-stopped
+    ports:
+      - "8001:8000"
     deploy:
       replicas: 1
 
