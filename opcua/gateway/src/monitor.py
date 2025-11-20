@@ -136,18 +136,16 @@ class DeviceMonitor:
         Runs until the connection is lost. A reconnect is triggered
         by exceptions from the keepalive loop.
         """
+        self.log.info(f"Connecting to OPC UA server {self.schema.server.uri}")
         async with Client(self.schema.server.uri) as client:
-            idx = await self._resolve_namespace(client)
-            device_node = await self._resolve_device_node(client, idx)
-
-            handler = SubscriptionHandler(self.dev_uuid, self.app)
+            handler = SubscriptionHandler(self.dev_uuid, self.app, client)
             self.sub = await client.create_subscription(
                 period=float(self.schema.server.subscription.publishing_interval),
                 handler=handler,
             )
 
-            await self._subscribe_variables(device_node, idx, handler)
-            await self._subscribe_events(device_node)
+            await self._subscribe_variables(client, handler)
+            await self._subscribe_events()
 
             self.global_producer.send(
                 asset_uuid=self.dev_uuid,
@@ -155,7 +153,7 @@ class DeviceMonitor:
             )
             self.log.info(f"[{self.dev_uuid}] Connected to OPC UA server at {self.schema.server.uri}")
 
-            await self._keepalive_loop(device_node)
+            await self._keepalive_loop(client)
 
     async def _resolve_namespace(self, client: Client) -> int:
         """
@@ -176,82 +174,56 @@ class DeviceMonitor:
             self.log.error(f"Failed to resolve namespace URI {self.schema.server.namespace_uri}: {e}")
             raise
 
-    async def _resolve_device_node(self, client: Client, idx: int):
-        """
-        Resolve the device node from path or node ID.
-
-        Args:
-            client (Client): Connected OPC UA client.
-            idx (int): Namespace index.
-
-        Returns:
-            Node: The resolved OPC UA node.
-
-        Raises:
-            Exception: If resolution fails.
-        """
-        try:
-            if self.schema.device.path:
-                path_parts = [f"{idx}:{p}" for p in self.schema.device.path.split("/")]
-                return await client.nodes.objects.get_child(path_parts)
-            return client.get_node(self.schema.device.node_id)
-        except Exception as e:
-            self.log.error(
-                f"Failed to resolve device node (path={self.schema.device.path} node_id={self.schema.device.node_id}): {e}"
-            )
-            raise
-
-    async def _subscribe_variables(self, device_node, idx: int, handler: SubscriptionHandler) -> None:
+    async def _subscribe_variables(self, client: Client, handler: SubscriptionHandler) -> None:
         """
         Subscribe to all configured variables.
 
         Args:
-            device_node (Node): The resolved device node.
-            idx (int): Namespace index.
+            client (Client): Connected OPC UA client
             handler (SubscriptionHandler): Handles variable updates.
         """
-        if not self.schema.device.variables:
+        if not self.schema.variables:
             return
-        for local_name, var_cfg in self.schema.device.variables.items():
+        for local_name, var_cfg in self.schema.variables.items():
             try:
-                var_node = await device_node.get_child([f"{idx}:{var_cfg.browse_name}"])
+                var_node = client.get_node(var_cfg.node_id)
                 await self.sub.subscribe_data_change(
                     var_node,
                     queuesize=var_cfg.queue_size,
                     sampling_interval=var_cfg.sampling_interval,
                 )
-                qname = await var_node.read_browse_name()
-                handler.node_map[var_node] = {"local_name": local_name, "browse_name": qname.Name}
-                self.log.info(f"[{self.dev_uuid}] Subscribed variable {local_name} ({var_cfg.browse_name})")
+                handler.node_map[var_node] = {"local_name": local_name, "tag": var_cfg.tag}
+                self.log.info(f"[{self.dev_uuid}] Subscribed variable {local_name} ({var_cfg.tag})")
             except Exception as e:
-                self.log.error(f"[{self.dev_uuid}] Failed to subscribe variable {local_name} ({var_cfg.browse_name}): {e}")
+                self.log.error(f"[{self.dev_uuid}] Failed to subscribe variable {local_name} ({var_cfg.tag}): {e}")
 
-    async def _subscribe_events(self, device_node) -> None:
+    async def _subscribe_events(self) -> None:
+        """ Subscribe to events. """
+        if not self.schema.events:
+            return
+        for local_name, event_cfg in self.schema.events.items():
+            try:
+                await self.sub.subscribe_events(event_cfg.node_id)
+                self.log.info(f"[{local_name}] Subscribed to events of node {event_cfg.node_id}")
+            except Exception as e:
+                self.log.error(f"[{local_name}] Failed to subscribe to events: {e}")
+
+    async def _keepalive_loop(self, client: Client) -> None:
         """
-        Subscribe to events on the device node.
+        Keep the session alive by reading the server's Objects folder periodically.
 
         Args:
-            device_node (Node): The resolved device node.
-        """
-        try:
-            await self.sub.subscribe_events(device_node)
-            self.log.info(f"[{self.dev_uuid}] Subscribed to events on device")
-        except Exception as e:
-            self.log.error(f"[{self.dev_uuid}] Failed to subscribe to events: {e}")
-
-    async def _keepalive_loop(self, device_node) -> None:
-        """
-        Keep the session alive by polling the device node.
-
-        Args:
-            device_node (Node): The resolved device node.
+            client (Client): Connected OPC UA client.
 
         Raises:
             Exception: If the server becomes unreachable.
         """
+        poll_node = client.nodes.objects
+        self.log.info(f"[{self.dev_uuid}] Keepalive by polling server Objects folder")
+
         while True:
             await asyncio.sleep(1)
-            await device_node.read_display_name()  # exception triggers reconnect
+            await poll_node.read_display_name()  # exception triggers reconnect
 
     async def _cleanup(self) -> None:
         """

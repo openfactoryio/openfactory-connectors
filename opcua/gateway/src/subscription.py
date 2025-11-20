@@ -14,7 +14,7 @@ Key components:
 from fastapi import FastAPI
 from numbers import Number
 from typing import Any
-from asyncua import ua
+from asyncua import ua, Client
 from asyncua.common.node import Node
 from openfactory.assets import AssetAttribute
 from openfactory.assets.utils import openfactory_timestamp, current_timestamp
@@ -36,7 +36,7 @@ class SubscriptionHandler:
     Returns:
         None
     """
-    def __init__(self, opcua_device_uuid: str, app: FastAPI):
+    def __init__(self, opcua_device_uuid: str, app: FastAPI, opcua_client: Client):
         """
         Initialize the SubscriptionHandler.
 
@@ -51,6 +51,7 @@ class SubscriptionHandler:
         self.logger = app.state.logger
         self.gateway_id = app.state.gateway_id
         self.queue = app.state.queue
+        self.client = opcua_client
 
         # Cache mapping: Node -> {"local_name": str, "browse_name": str}
         self.node_map: dict = {}
@@ -80,7 +81,7 @@ class SubscriptionHandler:
         # Extract variable name
         info = self.node_map.get(node, {})
         local_name = info.get("local_name", "<unknown>")
-        browse_name = info.get("browse_name", "<unknown>")
+        tag = info.get("tag", "<unknown>")
 
         # Extract DataValue
         data_value: ua.DataValue = data.monitored_item.Value
@@ -91,11 +92,11 @@ class SubscriptionHandler:
         # check status
         if not data_value.StatusCode.is_good():
             self.logger.warning(
-                f"Received bad or uncertain value for {local_name} ({browse_name}): StatusCode={data_value.StatusCode}"
+                f"Received bad or uncertain value for {local_name} ({tag}): StatusCode={data_value.StatusCode}"
             )
             val = "UNAVAILABLE"
 
-        self.logger.debug(f"DataChange: {local_name}:({browse_name}) -> {val}")
+        self.logger.debug(f"DataChange: {local_name}:({tag}) -> {val}")
 
         device_timestamp = opcua_data_timestamp(data.monitored_item.Value)
         message = {
@@ -104,7 +105,7 @@ class SubscriptionHandler:
                 id=local_name,
                 value=val,
                 type=ofa_type,
-                tag=browse_name,
+                tag=tag,
                 timestamp=openfactory_timestamp(device_timestamp),
             ),
             "device_timestamp": device_timestamp,
@@ -135,8 +136,13 @@ class SubscriptionHandler:
         try:
             message = getattr(event, "Message", None)
             severity = getattr(event, "Severity", None)
-            active = getattr(event, "ActiveState", None)
-            source = getattr(event, "SourceName", None)
+            source_name = getattr(event, "SourceName", "opcua")
+            event_type = getattr(event, "EventType", None)
+            tag = "OPCUAEvent"
+            if event_type:
+                event_type_node = self.client.get_node(event_type)
+                browse_name = await event_type_node.read_browse_name()
+                tag = browse_name.Name
 
             if message and hasattr(message, "Text"):
                 message_text = message.Text
@@ -146,13 +152,7 @@ class SubscriptionHandler:
             if severity:
                 message_text = f"{message_text} (Severity: {severity})"
 
-            # Determine Condition tag based on active state
-            tag = "Fault"
-            if active and hasattr(active, "EffectiveDisplayName"):
-                if active.EffectiveDisplayName != "Active":
-                    tag = "Normal"
-
-            self.logger.debug(f"Event from {source} (severity {severity}): {message_text}")
+            self.logger.debug(f"Event from {source_name}: {message_text}")
 
         except Exception as e:
             self.logger.error(f"Error parsing event: {e}, raw event={event}")
@@ -162,7 +162,7 @@ class SubscriptionHandler:
         send_payload = {
             "asset_uuid": self.opcua_device_uuid,
             "asset_attribute": AssetAttribute(
-                id="alarm",
+                id=f"{source_name}_event",
                 value=message_text,
                 type="Condition",
                 tag=tag,
