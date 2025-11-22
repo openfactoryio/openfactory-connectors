@@ -84,7 +84,6 @@ class SubscriptionHandler:
         local_name = info.get("local_name", "<unknown>")
         tag = info.get("tag", "<unknown>")
         deadband = info.get("deadband", 0)
-        self.logger.info(f"deadband={deadband}")
 
         # Determine OpenFactory type based on value type
         ofa_type = "Samples" if isinstance(val, Number) else "Events"
