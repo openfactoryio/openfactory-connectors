@@ -192,7 +192,12 @@ class DeviceMonitor:
                     queuesize=var_cfg.queue_size,
                     sampling_interval=var_cfg.sampling_interval,
                 )
-                handler.node_map[var_node] = {"local_name": local_name, "tag": var_cfg.tag, "deadband": var_cfg.deadband}
+                handler.node_map[var_node] = {
+                    "local_name": local_name,
+                    "tag": var_cfg.tag,
+                    "deadband": var_cfg.deadband,
+                    "last_val": None
+                    }
                 self.log.info(f"[{self.dev_uuid}] Subscribed variable {local_name} ({var_cfg.tag})")
             except Exception as e:
                 self.log.error(f"[{self.dev_uuid}] Failed to subscribe variable {local_name} ({var_cfg.tag}): {e}")

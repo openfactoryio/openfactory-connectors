@@ -52,10 +52,38 @@ class SubscriptionHandler:
         self.gateway_id = app.state.gateway_id
         self.queue = app.state.queue
         self.client = opcua_client
-        self.last_val = None
 
         # Cache mapping: Node -> {"local_name": str, "browse_name": str}
         self.node_map: dict = {}
+
+    def normalize_value(self, val: object) -> Any:
+        """
+        Convert OPC UA values into clean Python-native ones.
+
+        Args:
+            val (object): The new value of the variable.
+
+        Returns:
+            normalized value (Any)
+        """
+        # LocalizedText → return its text
+        if isinstance(val, ua.LocalizedText):
+            return val.Text
+
+        # ByteString → return hex string instead of raw bytes
+        if isinstance(val, (bytes, bytearray)):
+            return list(val)
+
+        # Arrays → normalize each element
+        if isinstance(val, list):
+            return [self.normalize_value(v) for v in val]
+
+        # ua.Variant: unwrap
+        if isinstance(val, ua.Variant):
+            return self.normalize_value(val.Value)
+
+        # fallback: return as-is
+        return val
 
     async def datachange_notification(self, node: Node, val: object, data: ua.DataChangeNotification) -> None:
         """
@@ -74,9 +102,6 @@ class SubscriptionHandler:
             val (object): The new value of the variable.
             data (ua.DataChangeNotification): The notification containing the
                 DataValue, including timestamps and status information.
-
-        Returns:
-            None
         """
 
         # Extract variable name
@@ -84,6 +109,9 @@ class SubscriptionHandler:
         local_name = info.get("local_name", "<unknown>")
         tag = info.get("tag", "<unknown>")
         deadband = info.get("deadband", 0)
+
+        # normalize value
+        val = self.normalize_value(val)
 
         # Determine OpenFactory type based on value type
         ofa_type = "Samples" if isinstance(val, Number) else "Events"
@@ -100,9 +128,10 @@ class SubscriptionHandler:
 
         # verify deadband
         if ofa_type == "Samples" and val != "UNAVAILABLE":
-            if self.last_val is not None and abs(val - float(self.last_val)) < deadband:
+            last_val = info.get("last_val", None)
+            if last_val is not None and abs(val - float(last_val)) <= deadband:
                 return
-            self.last_val = val
+            self.node_map[node]["last_val"] = val
 
         self.logger.debug(f"DataChange: {local_name}:({tag}) -> {val}")
 
