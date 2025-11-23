@@ -54,6 +54,7 @@ class DeviceMonitor:
         self.global_producer = app.state.global_producer
         self.schema = OPCUAConnectorSchema(**device.connector.model_dump())
         self.sub = None
+        self._connection_error = False
 
         # Register device globally
         _active_device_defs[self.dev_uuid] = self.device
@@ -110,6 +111,7 @@ class DeviceMonitor:
         while True:
             try:
                 await self._run_session()
+                self._connection_error = False
             except asyncio.CancelledError:
                 await self._cleanup()
                 raise
@@ -118,8 +120,11 @@ class DeviceMonitor:
                     self.log.error(f"[{self.dev_uuid}] Device cannot be resolved with {self.schema.server.uri}: {e}")
                     await self._cleanup()
                     break
-                self.log.error(f"[{self.dev_uuid}] OPC UA client error: {type(e).__name__}: {e}")
-                self.log.debug(traceback.format_exc())
+                if not self._connection_error:
+                    self.log.error(f"[{self.dev_uuid}] OPC UA client error: {type(e).__name__}: {e}")
+                    self.log.debug(traceback.format_exc())
+                    self.log.error(f"[{self.dev_uuid}] Will attempt to connect again as soon as device is back online ...")
+                    self._connection_error = True
                 try:
                     self.global_producer.send(
                         asset_uuid=self.dev_uuid,
@@ -136,8 +141,8 @@ class DeviceMonitor:
         Runs until the connection is lost. A reconnect is triggered
         by exceptions from the keepalive loop.
         """
-        self.log.info(f"Connecting to OPC UA server {self.schema.server.uri}")
         async with Client(self.schema.server.uri) as client:
+            self.log.info(f"Connecting to OPC UA server {self.schema.server.uri}")
             handler = SubscriptionHandler(self.dev_uuid, self.app, client)
             self.sub = await client.create_subscription(
                 period=float(self.schema.server.subscription.publishing_interval),
