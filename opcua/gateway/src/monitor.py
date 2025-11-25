@@ -25,6 +25,7 @@ from openfactory.schemas.connectors.opcua import OPCUAConnectorSchema
 from openfactory.assets import AssetAttribute
 from .subscription import SubscriptionHandler
 from .state import _active_device_defs
+from .utils import get_node_by_path
 
 
 class DeviceMonitor:
@@ -191,7 +192,10 @@ class DeviceMonitor:
             return
         for local_name, var_cfg in self.schema.variables.items():
             try:
-                var_node = client.get_node(var_cfg.node_id)
+                if var_cfg.browse_path is not None:
+                    var_node = await get_node_by_path(client, var_cfg.browse_path)
+                else:
+                    var_node = client.get_node(var_cfg.node_id)
                 await self.sub.subscribe_data_change(
                     var_node,
                     queuesize=var_cfg.queue_size,
@@ -203,9 +207,12 @@ class DeviceMonitor:
                     "deadband": var_cfg.deadband,
                     "last_val": None
                     }
-                self.log.info(f"[{self.dev_uuid}] Subscribed variable {local_name} ({var_cfg.tag})")
+                self.log.info(f"[{self.dev_uuid}] Subscribed variable {local_name} ({var_node.nodeid.to_string()})")
             except Exception as e:
-                self.log.error(f"[{self.dev_uuid}] Failed to subscribe variable {local_name} ({var_cfg.tag}): {e}")
+                self.log.error(
+                    f"[{self.dev_uuid}] Failed to subscribe variable {local_name} ({var_node.nodeid.to_string()}): {e}",
+                    exc_info=True
+                    )
 
     async def _subscribe_events(self) -> None:
         """ Subscribe to events. """

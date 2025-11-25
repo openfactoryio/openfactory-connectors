@@ -13,8 +13,8 @@ Functions:
 """
 
 import logging
-from typing import Any
-from asyncua import ua
+from typing import Any, List
+from asyncua import ua, Client, Node
 from datetime import datetime, timezone
 
 
@@ -84,3 +84,52 @@ def opcua_event_timestamp(event: Any) -> datetime:
     if hasattr(receive_time, "isoformat"):
         return receive_time
     return datetime.now(timezone.utc)
+
+
+async def get_node_by_path(client: Client, path: str) -> Node:
+    """
+    Resolve and return an OPC UA node using a comma-separated browse path.
+
+    The path must be given in the format ``"ns:Name,ns:ChildName,..."``,
+    where each segment specifies a namespace index and a browse name.
+    For example: ``"0:Objects,2:MyDevice,2:Sensor1"``.
+
+    If the first element ends with ``"Root"``, it will be skipped because
+    the search always starts from the OPC UA Root node.
+
+    Args:
+        client (Client): Connected OPC UA client
+        path (str): Comma-separated list of browse path segments in the form ``"namespace_index:BrowseName"``
+
+    Returns:
+        Node: The resolved OPC UA node corresponding to the provided path.
+
+    Raises:
+        ValueError:
+            If any segment in the provided path cannot be resolved.
+    """
+    elements: List[str] = path.split("/")
+
+    # Start from the Root node
+    node: Node = client.get_root_node()
+
+    # Skip "0:Root" if it is the first element
+    if elements[0].endswith("Root"):
+        elements = elements[1:]
+
+    for elem in elements:
+        ns_str, name = elem.split(":")
+        ns_index = int(ns_str)
+        # Browse children and find the matching one
+        children = await node.get_children()
+        found = False
+        for child in children:
+            child_name = await child.read_browse_name()
+            if child_name.Name == name and child_name.NamespaceIndex == ns_index:
+                node = child
+                found = True
+                break
+        if not found:
+            raise ValueError(f"Node '{elem}' not found under {node}")
+
+    return node
