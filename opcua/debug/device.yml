@@ -23,7 +23,7 @@ devices:
 
       variables:
         temp:
-          node_id: ns=2;i=4
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor1/2:Temperature
           tag: Temperature
         hum:
           node_id: ns=2;i=5
@@ -57,7 +57,7 @@ devices:
           node_id: ns=2;i=10
           tag: Temperature
         hum:
-          node_id: ns=2;i=11
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor2/2:Humidity
           tag: Humidity
         sensor_model: 
           node_id: ns=2;i=9
