@@ -151,7 +151,7 @@ class DeviceMonitor:
             )
 
             await self._subscribe_variables(client, handler)
-            await self._subscribe_events()
+            await self._subscribe_events(client)
 
             self.global_producer.send(
                 asset_uuid=self.dev_uuid,
@@ -207,23 +207,33 @@ class DeviceMonitor:
                     "deadband": var_cfg.deadband,
                     "last_val": None
                     }
-                self.log.info(f"[{self.dev_uuid}] Subscribed variable {local_name} ({var_node.nodeid.to_string()})")
+                self.log.info(f"[{self.dev_uuid}] Subscribed to variable '{local_name}' ({var_node.nodeid.to_string()})")
             except Exception as e:
                 self.log.error(
-                    f"[{self.dev_uuid}] Failed to subscribe variable {local_name} ({var_node.nodeid.to_string()}): {e}",
+                    f"[{self.dev_uuid}] Failed to subscribe to variable '{local_name}' ({var_node.nodeid.to_string()}): {e}",
                     exc_info=True
                     )
 
-    async def _subscribe_events(self) -> None:
-        """ Subscribe to events. """
+    async def _subscribe_events(self, client: Client, ) -> None:
+        """
+        Subscribe to events.
+
+        Args:
+            client (Client): Connected OPC UA client
+        """
         if not self.schema.events:
             return
         for local_name, event_cfg in self.schema.events.items():
             try:
-                await self.sub.subscribe_events(event_cfg.node_id)
-                self.log.info(f"[{local_name}] Subscribed to events of node {event_cfg.node_id}")
+                if event_cfg.browse_path is not None:
+                    event_node = await get_node_by_path(client, event_cfg.browse_path)
+                    node_id = event_node.nodeid.to_string()
+                else:
+                    node_id = event_cfg.node_id
+                await self.sub.subscribe_events(node_id)
+                self.log.info(f"[{self.dev_uuid}] Subscribed to events '{local_name}' ({node_id})")
             except Exception as e:
-                self.log.error(f"[{local_name}] Failed to subscribe to events: {e}")
+                self.log.error(f"[{self.dev_uuid}] Failed to subscribe to events '{local_name}': {e}", exc_info=True)
 
     async def _keepalive_loop(self, client: Client) -> None:
         """

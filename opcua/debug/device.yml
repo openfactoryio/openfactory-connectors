@@ -34,7 +34,7 @@ devices:
 
       events:
         sensor_events:
-          node_id: ns=2;i=2
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor1
 
   opcua_sensor2:
     uuid: OPCUA-SENSOR-002
