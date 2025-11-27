@@ -1,10 +1,10 @@
 [project]
 name = "openfactory-connectors"
-version = "0.4.5"
+version = "0.4.5.1"
 description = "A collection of device connectors for OpenFactory."
 requires-python = ">=3.12"
 dependencies = [
-    "OpenFactory @ git+https://github.com/openfactoryio/openfactory-core.git@v0.4.5",
+    "OpenFactory @ git+https://github.com/openfactoryio/openfactory-core.git@v0.4.5.1",
     "fastapi",
     "uvicorn",
     "prometheus-client",
