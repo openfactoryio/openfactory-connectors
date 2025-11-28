@@ -13,7 +13,7 @@ Functions:
 """
 
 import logging
-from typing import Any, List
+from typing import Any
 from asyncua import ua, Client, Node
 from datetime import datetime, timezone
 
@@ -86,7 +86,7 @@ def opcua_event_timestamp(event: Any) -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def get_node_by_path(client: Client, path: str) -> Node:
+async def get_node_by_path(client: Client, path: str) -> Node | None:
     """
     Resolve and return an OPC UA node using a comma-separated browse path.
 
@@ -108,28 +108,51 @@ async def get_node_by_path(client: Client, path: str) -> Node:
         ValueError:
             If any segment in the provided path cannot be resolved.
     """
-    elements: List[str] = path.split("/")
+    elements = path.split("/")
 
-    # Start from the Root node
-    node: Node = client.get_root_node()
-
-    # Skip "0:Root" if it is the first element
+    # Normalize: skip Root if included
     if elements[0].endswith("Root"):
         elements = elements[1:]
 
-    for elem in elements:
-        ns_str, name = elem.split(":")
-        ns_index = int(ns_str)
-        # Browse children and find the matching one
-        children = await node.get_children()
-        found = False
-        for child in children:
-            child_name = await child.read_browse_name()
-            if child_name.Name == name and child_name.NamespaceIndex == ns_index:
-                node = child
-                found = True
-                break
-        if not found:
-            raise ValueError(f"Node '{elem}' not found under {node}")
+    root = client.get_root_node()
 
-    return node
+    try:
+        node = await root.get_child(elements)
+        return node
+
+    except ua.UaStatusCodeError as exc:
+        # Find out where it broke
+        node = root
+        resolved_segments = []
+
+        failed_segment = None
+
+        for segment in elements:
+            try:
+                node = await node.get_child([segment])
+                resolved_segments.append(segment)
+            except ua.UaStatusCodeError:
+                failed_segment = segment
+                break
+
+        # browse children at the level where the failure occurred
+        try:
+            children = await node.get_children()
+            child_names = []
+            for c in children:
+                bname = await c.read_browse_name()
+                child_names.append(f"{bname.NamespaceIndex}:{bname.Name}")
+        except Exception:
+            child_names = []
+
+        # Build error message
+        available_children = ", ".join(child_names) if child_names else "<none>"
+        msg = (
+            f"Failed to resolve OPC UA path: '{path}'.\n"
+            f"Could not resolve segment: '{failed_segment}'.\n"
+            f"Path resolved up to: '{'/'.join(resolved_segments) or '<root>'}'.\n"
+            f"Server error: {exc}.\n"
+            f"Children available at this level: {available_children}"
+        )
+
+        raise ValueError(msg) from exc
