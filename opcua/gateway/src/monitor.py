@@ -208,6 +208,8 @@ class DeviceMonitor:
                     "last_val": None
                     }
                 self.log.info(f"[{self.dev_uuid}] Subscribed to variable '{local_name}' ({var_node.nodeid.to_string()})")
+            except ValueError as e:
+                self.log.error(f"[{self.dev_uuid}] Failed to subscribe to variable '{local_name}' ({var_node.nodeid.to_string()}):{e}")
             except Exception as e:
                 self.log.error(
                     f"[{self.dev_uuid}] Failed to subscribe to variable '{local_name}' ({var_node.nodeid.to_string()}): {e}",
