@@ -115,6 +115,9 @@ class SubscriptionHandler:
 
         # Determine OpenFactory type based on value type
         ofa_type = "Samples" if isinstance(val, Number) else "Events"
+        # Case for Boolean variables (they will appear as 'true'/'false' in Kafka but Python consider them as numbers)
+        if isinstance(val, bool):
+            ofa_type = 'Events'
 
         # Extract DataValue
         data_value: ua.DataValue = data.monitored_item.Value
