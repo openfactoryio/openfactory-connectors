@@ -19,10 +19,10 @@ import asyncio
 import traceback
 import os
 from fastapi import FastAPI
-from asyncua import Client
+from asyncua import Client, Node, ua
 from openfactory.schemas.devices import Device
 from openfactory.schemas.connectors.opcua import OPCUAConnectorSchema
-from openfactory.assets import AssetAttribute
+from openfactory.assets import Asset, AssetAttribute
 from .subscription import SubscriptionHandler
 from .state import _active_device_defs
 from .utils import get_node_by_path
@@ -51,6 +51,7 @@ class DeviceMonitor:
         self.device = device
         self.app = app
         self.dev_uuid = device.uuid
+        self.asset = Asset(device.uuid, app.state.ksql)
         self.gateway_id = app.state.gateway_id
         self.global_producer = app.state.global_producer
         self.schema = OPCUAConnectorSchema(**device.connector.model_dump())
@@ -208,6 +209,50 @@ class DeviceMonitor:
                     "last_val": None
                     }
                 self.log.info(f"[{self.dev_uuid}] Subscribed to variable '{local_name}' ({var_node.nodeid.to_string()})")
+
+                # Discover server-side access level
+                user_access_level = await var_node.get_user_access_level()
+                is_writable = ua.AccessLevel.CurrentWrite in user_access_level
+
+                # Policy (schema) vs capability (server)
+                if var_cfg.access_level == "rw":
+                    if is_writable:
+                        loop = asyncio.get_running_loop()
+
+                        async def _write_value(value: str, node: Node = var_node, name: str = local_name) -> None:
+                            """ Write value to OPC UA server, capturing loop variables, and handling errors. """
+                            try:
+                                v_type = await node.read_data_type_as_variant_type()
+                                await node.write_value(value, varianttype=v_type)
+                            except Exception as e:
+                                self.log.error(
+                                    f"[{self.dev_uuid}] Failed to write variable '{name}' ({node.nodeid.to_string()}): {e}",
+                                    exc_info=True,
+                                )
+
+                        def on_variable_update(msg_subject: str, msg_value: dict, node: Node = var_node, name: str = local_name) -> None:
+                            """ Callback for attribute changes, capturing loop variables. """
+                            async def _check_and_write(value: str):
+                                """ Avoid infinity loops. """
+                                current_val = await node.read_value()
+                                if value != current_val:
+                                    self.log.debug(f"[{self.dev_uuid}] Updating variable '{name}' ({node.nodeid.to_string()}) with '{value}'")
+                                    await _write_value(value)
+
+                            loop.create_task(_check_and_write(msg_value['VALUE']))
+
+                        # Schedule write-back to OPC UA server if OpenFactory detects a change
+                        self.asset.subscribe_to_attribute(local_name, on_variable_update)
+                        self.log.info(
+                            f"[{self.dev_uuid}] Allow OpenFactory to write to "
+                            f"variable '{local_name}' ({var_node.nodeid.to_string()})"
+                            )
+                    else:
+                        self.log.warning(
+                            f"[{self.dev_uuid}] Variable '{local_name}' ({var_node.nodeid.to_string()}) "
+                            f"declared as rw but server reports it as read-only"
+                        )
+
             except ValueError as e:
                 self.log.error(f"[{self.dev_uuid}] Failed to subscribe to variable '{local_name}' ({var_node.nodeid.to_string()}):{e}")
             except Exception as e:
