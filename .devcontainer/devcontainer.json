@@ -1,8 +1,8 @@
 {
   "name": "OpenFactory-Connectors",
-  "image": "mcr.microsoft.com/devcontainers/python:2.0.2-3.13-bullseye",
+  "image": "ghcr.io/openfactoryio/devcontainer",
   "features": {
-    "ghcr.io/devcontainers/features/docker-in-docker:2.12.4": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:2.14.0": {},
     "ghcr.io/openfactoryio/openfactory-sdk/infra": {
       "openfactory-version": "main"
     }
