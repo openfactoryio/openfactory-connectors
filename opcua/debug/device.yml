@@ -28,6 +28,10 @@ devices:
         hum:
           node_id: ns=2;i=5
           tag: Humidity
+        temp_unit:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor1/2:TemperatureUnit
+          tag: TemperatureUnit
+          access_level: rw
         sensor_model: 
           node_id: ns=2;i=3
           tag: SensorModel
