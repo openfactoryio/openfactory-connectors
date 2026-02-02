@@ -11,6 +11,7 @@ Key components:
   for a specific OPC UA device UUID.
 """
 
+import datetime
 from fastapi import FastAPI
 from numbers import Number
 from typing import Any
@@ -82,6 +83,10 @@ class SubscriptionHandler:
         if isinstance(val, ua.Variant):
             return self.normalize_value(val.Value)
 
+        # datetime.datetime → return as str
+        if isinstance(val, datetime.datetime):
+            return str(val)
+
         # fallback: return as-is
         return val
 
@@ -111,6 +116,7 @@ class SubscriptionHandler:
         deadband = info.get("deadband", 0)
 
         # normalize value
+        self.logger.debug(f"{local_name} is of type {type(val)}")
         val = self.normalize_value(val)
 
         # Determine OpenFactory type based on value type
