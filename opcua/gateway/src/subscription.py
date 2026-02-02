@@ -116,7 +116,6 @@ class SubscriptionHandler:
         deadband = info.get("deadband", 0)
 
         # normalize value
-        self.logger.debug(f"{local_name} is of type {type(val)}")
         val = self.normalize_value(val)
 
         # Determine OpenFactory type based on value type
