@@ -219,8 +219,8 @@ class DeviceMonitor:
                     if is_writable:
                         loop = asyncio.get_running_loop()
 
-                        async def _write_value(value: str, node: Node = var_node, name: str = local_name) -> None:
-                            """ Write value to OPC UA server, capturing loop variables, and handling errors. """
+                        async def _write_value(value: str, node: Node, name: str) -> None:
+                            """ Write value to OPC UA server. """
                             try:
                                 v_type = await node.read_data_type_as_variant_type()
                                 await node.write_value(value, varianttype=v_type)
@@ -237,7 +237,7 @@ class DeviceMonitor:
                                 current_val = await node.read_value()
                                 if value != current_val:
                                     self.log.debug(f"[{self.dev_uuid}] Updating variable '{name}' ({node.nodeid.to_string()}) with '{value}'")
-                                    await _write_value(value)
+                                    await _write_value(value, node=node, name=name)
 
                             loop.create_task(_check_and_write(msg_value['VALUE']))
 
