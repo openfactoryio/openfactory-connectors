@@ -1,6 +1,6 @@
 {
   "name": "OpenFactory-Connectors",
-  "image": "ghcr.io/openfactoryio/devcontainer",
+  "image": "ghcr.io/openfactoryio/devcontainer-py3.12",
   "features": {
     "ghcr.io/devcontainers/features/docker-in-docker:2.14.0": {},
     "ghcr.io/openfactoryio/openfactory-sdk/infra": {
