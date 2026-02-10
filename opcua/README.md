@@ -27,6 +27,7 @@ Together, they allow OpenFactory to handle **many devices across multiple factor
 - Connects to one or more OPC UA servers.
 - Collects data from devices (variables, events, alarms).
 - Streams normalized messages into OpenFactory (Kafka).
+- Requests OPC UA methods to be executed based on OpenFactory commands.
 - Multiple gateways can be deployed for scalability.
 - Detailed usage and API documentation: [📖 Gateway README](gateway/README.md)
 
