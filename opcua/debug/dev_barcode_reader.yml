@@ -1,0 +1,85 @@
+# ---------------------------------------------------------------------------------------
+# 🏭 OpenFactory Asset configuration file for the virtual OPC UA Barcode Reader
+#
+# To be used in the Dev Container of this repo
+#
+# Deploy with:
+#   docker run -d -p 4841:4840 --name virtual-opcua-barcode-reader ghcr.io/openfactoryio/virtual-opcua-barcode-reader
+#   ofa device up opcua/debug/dev_barcode_reader.yml
+# ---------------------------------------------------------------------------------------
+
+devices:
+  vbarcode:
+    uuid: VIRTUAL-BARCODE-READER
+
+    connector:
+      type: opcua
+
+      server:
+        uri: opc.tcp://${CONTAINER_IP}:4841
+
+      variables:
+
+        # --- General device info ---
+        model:
+          browse_path: 0:Root/0:Objects/2:BarcodeReader/2:Model
+          tag: Hardware.Model
+
+        firmware_version:
+          browse_path: 0:Root/0:Objects/2:BarcodeReader/2:SoftwareRevision
+          tag: Firmware.Version
+
+        firmware_license:
+          browse_path: 0:Root/0:Objects/2:BarcodeReader/2:License
+          tag: Firmware.License
+
+        manufacturer:
+          browse_path: 0:Root/0:Objects/2:BarcodeReader/2:Manufacturer
+          tag: Hardware.Manufacturer
+
+        # --- State ---
+        last_code:
+          browse_path: 0:Root/0:Objects/2:BarcodeReader/2:State/2:LastCode
+          tag: Barcode.LastCode
+
+        last_timestamp:
+          browse_path: 0:Root/0:Objects/2:BarcodeReader/2:State/2:LastTimestamp
+          tag: Barcode.LastTimestamp
+
+        read_success:
+          browse_path: 0:Root/0:Objects/2:BarcodeReader/2:State/2:ReadSuccess
+          tag: Barcode.ReadSuccess
+
+        device_ready:
+          browse_path: 0:Root/0:Objects/2:BarcodeReader/2:State/2:DeviceReady
+          tag: Device.Ready
+
+        trigger_input_active:
+          browse_path: 0:Root/0:Objects/2:BarcodeReader/2:State/2:TriggerInputActive
+          tag: Device.TriggerInput
+
+        # --- Simulation parameters ---
+        simulation_mode:
+          browse_path: 0:Root/0:Objects/2:BarcodeReader/2:Simulation/2:Mode
+          tag: Simulation.Mode
+          access_level: rw
+
+        mean_arrival_time:
+          browse_path: 0:Root/0:Objects/2:BarcodeReader/2:Simulation/2:MeanArrivalTime
+          tag: Simulation.MeanArrivalTime
+          access_level: rw
+
+        failure_rate:
+          browse_path: 0:Root/0:Objects/2:BarcodeReader/2:Simulation/2:FailureRate
+          tag: Simulation.FailureRate
+          access_level: rw
+
+      # --- Methods ---
+      methods:
+        simulation_methods:
+          browse_path: 0:Root/0:Objects/2:BarcodeReader/2:Simulation
+
+      # --- Events ---
+      events:
+        barcode_reader_events:
+          browse_path: 0:Root/0:Objects/2:BarcodeReader
