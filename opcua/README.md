@@ -129,7 +129,7 @@ docker run -d --name virtual-opcua-sensor -p 4840:4840 -e NUM_SENSORS=2 ghcr.io/
 ```
 and
 ```bash
-ofa device up debug/device.yml
+ofa device up debug/dev_temp_sensors.yml
 ```
 to deploy the assets in OpenFactory.
 

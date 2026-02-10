@@ -1,7 +1,11 @@
-# OpenFactory Device Configuration File
+# ---------------------------------------------------------------------------------------
+# 🏭 OpenFactory Device Configuration File
+#
 # To be used in the Dev Container of this repo
-# Deploy virtual sensors like so:
-# docker run -d --name virtual-opcua-sensor -p 4840:4840 -e NUM_SENSORS=2 ghcr.io/openfactoryio/virtual-opcua-sensor
+#
+# Deploy with:
+#   docker run -d --name virtual-opcua-sensor -p 4840:4840 -e NUM_SENSORS=2 ghcr.io/openfactoryio/virtual-opcua-sensor
+# ---------------------------------------------------------------------------------------
 
 devices:
 
@@ -38,6 +42,10 @@ devices:
 
       events:
         sensor_events:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor1
+
+      methods:
+        sensor_methods:
           browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor1
 
   opcua_sensor2:
