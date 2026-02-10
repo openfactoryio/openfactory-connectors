@@ -18,8 +18,12 @@ a device monitor in an asyncio task.
 import asyncio
 import traceback
 import os
+import re
+import unicodedata
+from typing import Any, List
 from fastapi import FastAPI
 from asyncua import Client, Node, ua
+from asyncua.common.ua_utils import string_to_val
 from openfactory.schemas.devices import Device
 from openfactory.schemas.connectors.opcua import OPCUAConnectorSchema
 from openfactory.assets import Asset, AssetAttribute
@@ -57,6 +61,7 @@ class DeviceMonitor:
         self.schema = OPCUAConnectorSchema(**device.connector.model_dump())
         self.sub = None
         self._connection_error = False
+        self.methods = {}
 
         # Register device globally
         _active_device_defs[self.dev_uuid] = self.device
@@ -151,6 +156,7 @@ class DeviceMonitor:
                 handler=handler,
             )
 
+            await self._discover_methods(client)
             await self._subscribe_variables(client, handler)
             await self._subscribe_events(client)
 
@@ -162,24 +168,160 @@ class DeviceMonitor:
 
             await self._keepalive_loop(client)
 
-    async def _resolve_namespace(self, client: Client) -> int:
+    async def call_opcua_method(self, cmd: str, arguments: str) -> Any:
         """
-        Resolve the namespace index from the server URI.
+        Call an OPC UA method with its arguments.
 
         Args:
-            client (Client): Connected OPC UA client.
+            cmd (str): Command name
+            arguments (str): Space-separated string of arguments
 
         Returns:
-            int: The namespace index.
-
-        Raises:
-            Exception: If namespace resolution fails.
+            Any: result from the OPC UA method call
         """
+        # Get method metadata from cache
+        parent_node = self.methods[cmd]["parent_object"]
+        method_node = self.methods[cmd]["method_node"]
+        input_vtypes = self.methods[cmd]["input_vtypes"]
+
+        # Process input strings
+        args: List[str] = arguments.split() if arguments else []
+        ua_args: List[ua.Variant] = []
+
         try:
-            return await client.get_namespace_index(self.schema.server.namespace_uri)
+            # Convert raw strings to typed OPC UA Variants
+            for i, vtype in enumerate(input_vtypes):
+                # Get the string value for this position, default to empty string if missing
+                val_str = args[i] if i < len(args) else ""
+                ua_args.append(ua.Variant(string_to_val(val_str, vtype), vtype))
+
+            self.log.debug(f"[{self.dev_uuid}] Calling OPC UA method '{cmd}' with arguments {args}")
+            result = await parent_node.call_method(method_node, *ua_args)
+            self.log.debug(f"[{self.dev_uuid}] Method '{cmd}' result: {result}")
+
+            return result
+
         except Exception as e:
-            self.log.error(f"Failed to resolve namespace URI {self.schema.server.namespace_uri}: {e}")
-            raise
+            self.log.error(f"[{self.dev_uuid}] Method call failed for '{cmd}': {e}")
+
+    def _normalize_cmd(self, name: str) -> str:
+        """
+        Normalize a command name into a safe, ASCII-only identifier.
+
+        This function transforms the input string by:
+        1. Converting Unicode characters to closest ASCII equivalents (e.g., 'ä' → 'a').
+        2. Replacing any non-alphanumeric characters with underscores.
+        3. Collapsing multiple consecutive underscores into a single underscore.
+        4. Stripping leading and trailing underscores.
+
+        Args:
+            name (str): The original command name to normalize.
+
+        Returns:
+            str: A normalized, ASCII-only string suitable for use as a safe internal identifier.
+
+        Examples:
+            >>> self._normalize_cmd("Generate Code")
+            'Generate_Code'
+            >>> self._normalize_cmd("Öl Pumpe Start!")
+            'Ol_Pumpe_Start'
+            >>> self._normalize_cmd("Temp °C")
+            'Temp_C'
+        """
+        # Normalize unicode (ä → a, etc.)
+        name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+
+        # Replace non-alphanumeric with underscore
+        name = re.sub(r"[^a-zA-Z0-9_]", "_", name)
+
+        # Collapse multiple underscores
+        name = re.sub(r"_+", "_", name)
+
+        return name.strip("_")
+
+    async def _discover_methods(self, client: Client) -> None:
+        """
+        Discover methods, expose them in OpenFactory Asset and subscribes to OpenFactory commands.
+
+        Args:
+            client (Client): Connected OPC UA client
+        """
+        if not self.schema.methods:
+            return
+
+        for local_name, method_cfg in self.schema.methods.items():
+
+            self.log.debug(f"[{self.dev_uuid}] Add Methods for {local_name}")
+            if method_cfg.browse_path is not None:
+                methodes_node = await get_node_by_path(client, method_cfg.browse_path)
+            else:
+                methodes_node = await get_node_by_path(client, method_cfg.node_id)
+
+            for method_node in await methodes_node.get_methods():
+                method = await method_node.read_browse_name()
+                command = self._normalize_cmd(method.Name)
+                description = await method_node.read_description()
+                self.log.info(f"[{self.dev_uuid}] Add Method: {command} ({description.Text})")
+
+                vtypes = []
+                try:
+                    # Get the InputArguments property
+                    input_args_node = await method_node.get_child("0:InputArguments")
+                    input_args_values = await input_args_node.read_value()
+
+                    # Discover variant type of input arguments
+                    for _, spec in enumerate(input_args_values):
+                        vtype = ua.VariantType(spec.DataType.Identifier)
+                        vtypes.append(vtype)
+
+                        # Log structured information
+                        desc = spec.Description.Text if spec.Description else "No description"
+                        self.log.info(
+                            f"[{self.dev_uuid}] [{command}] Input argument: "
+                            f"Name='{spec.Name} "
+                            f"Type={vtype.name} "
+                            f"Desccription='{desc}'"
+                        )
+
+                except ua.UaStatusCodeError as e:
+                    if e.code == ua.StatusCodes.BadNoMatch:
+                        # No InputArguments found; ua_args remains an empty list
+                        input_args_values = []
+                    else:
+                        raise
+
+                # store reference to OPC UA method (map between OpenFactory command and OPC UA method)
+                self.methods[f"{command}"] = {
+                    "parent_object": methodes_node,
+                    "method_node": method_node,
+                    "input_vtypes": vtypes,
+                }
+
+                # add method to Asset
+                self.asset.add_attribute(
+                    asset_attribute=AssetAttribute(
+                        id=command,
+                        value=description.Text,
+                        type='Method',
+                        tag='Method'
+                    )
+                )
+
+                # add OpenFactory command to Asset
+                self.asset.add_attribute(
+                    asset_attribute=AssetAttribute(
+                        id=f"{command}_CMD",
+                        value="",
+                        type='OpenFactory',
+                        tag='Method.Command'
+                    )
+                )
+
+                # subscribe to OpenFactory command directed to the Asset
+                def on_cmd(msg_key, msg_value, cmd=command):
+                    asyncio.create_task(self.call_opcua_method(cmd=cmd, arguments=msg_value['VALUE']))
+
+                self.asset.subscribe_to_attribute(f'{command}_CMD', on_cmd)
 
     async def _subscribe_variables(self, client: Client, handler: SubscriptionHandler) -> None:
         """
