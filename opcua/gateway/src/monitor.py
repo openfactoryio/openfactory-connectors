@@ -278,7 +278,7 @@ class DeviceMonitor:
                         desc = spec.Description.Text if spec.Description else "No description"
                         self.log.info(
                             f"[{self.dev_uuid}] [{command}] Input argument: "
-                            f"Name='{spec.Name} "
+                            f"Name='{spec.Name}' "
                             f"Type={vtype.name} "
                             f"Desccription='{desc}'"
                         )
