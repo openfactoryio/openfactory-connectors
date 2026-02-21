@@ -20,12 +20,14 @@ import traceback
 import os
 import re
 import unicodedata
+import json
 from typing import Any, List
 from fastapi import FastAPI
 from asyncua import Client, Node, ua
 from asyncua.common.ua_utils import string_to_val
 from openfactory.schemas.devices import Device
 from openfactory.schemas.connectors.opcua import OPCUAConnectorSchema
+from openfactory.schemas.command_header import CommandEnvelope
 from openfactory.assets import Asset, AssetAttribute
 from .subscription import SubscriptionHandler
 from .state import _active_device_defs
@@ -168,13 +170,13 @@ class DeviceMonitor:
 
             await self._keepalive_loop(client)
 
-    async def call_opcua_method(self, cmd: str, arguments: str) -> Any:
+    async def call_opcua_method(self, cmd: str, envelope: CommandEnvelope) -> Any:
         """
         Call an OPC UA method with its arguments.
 
         Args:
             cmd (str): Command name
-            arguments (str): Space-separated string of arguments
+            envelope (CommandEnvelope): Command envelope containing header and named arguments
 
         Returns:
             Any: result from the OPC UA method call
@@ -183,22 +185,31 @@ class DeviceMonitor:
         parent_node = self.methods[cmd]["parent_object"]
         method_node = self.methods[cmd]["method_node"]
         input_vtypes = self.methods[cmd]["input_vtypes"]
+        name_to_index = self.methods[cmd]["name_to_index"]
 
-        # Process input strings
-        args: List[str] = arguments.split() if arguments else []
-        ua_args: List[ua.Variant] = []
+        # Extract arguments dict from envelope
+        args_dict = envelope.arguments or {}
+
+        # Prepare positional argument list for OPC UA
+        ua_args: List[ua.Variant] = [None] * len(input_vtypes)
+
+        for name, val_str in args_dict.items():
+            if name not in name_to_index:
+                self.log.warning(f"[{self.dev_uuid}] Unknown argument '{name}' for command '{cmd}'")
+                continue
+            idx = name_to_index[name]
+            vtype = input_vtypes[idx]
+            ua_args[idx] = ua.Variant(string_to_val(val_str, vtype), vtype)
+
+        # Fill any missing arguments with empty strings
+        for i, arg in enumerate(ua_args):
+            if arg is None:
+                ua_args[i] = ua.Variant("", input_vtypes[i])
 
         try:
-            # Convert raw strings to typed OPC UA Variants
-            for i, vtype in enumerate(input_vtypes):
-                # Get the string value for this position, default to empty string if missing
-                val_str = args[i] if i < len(args) else ""
-                ua_args.append(ua.Variant(string_to_val(val_str, vtype), vtype))
-
-            self.log.debug(f"[{self.dev_uuid}] Calling OPC UA method '{cmd}' with arguments {args}")
+            self.log.debug(f"[{self.dev_uuid}] Calling OPC UA method '{cmd}' with arguments {ua_args}")
             result = await parent_node.call_method(method_node, *ua_args)
             self.log.debug(f"[{self.dev_uuid}] Method '{cmd}' result: {result}")
-
             return result
 
         except Exception as e:
@@ -209,10 +220,10 @@ class DeviceMonitor:
         Normalize a command name into a safe, ASCII-only identifier.
 
         This function transforms the input string by:
-        1. Converting Unicode characters to closest ASCII equivalents (e.g., 'ä' → 'a').
-        2. Replacing any non-alphanumeric characters with underscores.
-        3. Collapsing multiple consecutive underscores into a single underscore.
-        4. Stripping leading and trailing underscores.
+          1. Converting Unicode characters to closest ASCII equivalents (e.g., 'ä' → 'a').
+          2. Replacing any non-alphanumeric characters with underscores.
+          3. Collapsing multiple consecutive underscores into a single underscore.
+          4. Stripping leading and trailing underscores.
 
         Args:
             name (str): The original command name to normalize.
@@ -263,16 +274,24 @@ class DeviceMonitor:
                 description = await method_node.read_description()
                 self.log.info(f"[{self.dev_uuid}] Add Method: {command} ({description.Text})")
 
+                # Build structured method contract that will be added to OpenFactory Asset
+                method_contract = {
+                    "description": description.Text if description else "",
+                    "arguments": []
+                }
+
                 vtypes = []
+                name_to_index = {}
                 try:
                     # Get the InputArguments property
                     input_args_node = await method_node.get_child("0:InputArguments")
                     input_args_values = await input_args_node.read_value()
 
                     # Discover variant type of input arguments
-                    for _, spec in enumerate(input_args_values):
+                    for pos, spec in enumerate(input_args_values):
                         vtype = ua.VariantType(spec.DataType.Identifier)
                         vtypes.append(vtype)
+                        name_to_index[spec.Name] = pos
 
                         # Log structured information
                         desc = spec.Description.Text if spec.Description else "No description"
@@ -282,6 +301,11 @@ class DeviceMonitor:
                             f"Type={vtype.name} "
                             f"Desccription='{desc}'"
                         )
+
+                        method_contract["arguments"].append({
+                            "name": spec.Name,
+                            "description": desc
+                        })
 
                 except ua.UaStatusCodeError as e:
                     if e.code == ua.StatusCodes.BadNoMatch:
@@ -295,13 +319,17 @@ class DeviceMonitor:
                     "parent_object": methodes_node,
                     "method_node": method_node,
                     "input_vtypes": vtypes,
+                    "name_to_index": name_to_index,
                 }
+
+                # Store mapping for fast lookup during call
+                self.methods[command]["name_to_index"] = name_to_index
 
                 # add method to Asset
                 self.asset.add_attribute(
                     asset_attribute=AssetAttribute(
                         id=command,
-                        value=description.Text,
+                        value=json.dumps(method_contract),
                         type='Method',
                         tag='Method'
                     )
@@ -319,7 +347,15 @@ class DeviceMonitor:
 
                 # subscribe to OpenFactory command directed to the Asset
                 def on_cmd(msg_key, msg_value, cmd=command):
-                    asyncio.create_task(self.call_opcua_method(cmd=cmd, arguments=msg_value['VALUE']))
+                    try:
+                        # Parse JSON string into CommandEnvelope
+                        envelope = CommandEnvelope.parse_raw(msg_value['VALUE'])
+                    except Exception as e:
+                        self.log.error(f"[{self.dev_uuid}] Failed to parse CommandEnvelope for '{cmd}': {e}")
+                        return
+
+                    # Schedule the OPC UA method call with typed envelope
+                    asyncio.create_task(self.call_opcua_method(cmd=cmd, envelope=envelope))
 
                 self.asset.subscribe_to_attribute(f'{command}_CMD', on_cmd)
 
