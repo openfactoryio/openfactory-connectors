@@ -82,7 +82,7 @@ async def deregister_asset_async(asset_uuid: str):
         Exception: Propagates any exception raised during the deregistration process.
     """
     async with thread_semaphore:
-        await asyncio.to_thread(deregister_asset, asset_uuid, ksqlClient=ksql)
+        await asyncio.to_thread(deregister_asset, asset_uuid, ksqlClient=ksql, bootstrap_servers=os.getenv("KAFKA_BROKER"))
 
 
 async def fetch_devices_count(client, gw_id, gw_host):
