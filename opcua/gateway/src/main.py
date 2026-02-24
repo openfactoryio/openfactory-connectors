@@ -321,6 +321,7 @@ app = FastAPI(title="OPCUA Gateway",
 app.state.logger = setup_logging(level=LOG_LEVEL)
 app.state.gateway_id = 'UNAVAILABLE'
 app.state.ksql = KSQLDBClient(os.getenv("KSQLDB_URL"))
+app.state.bootstrap_servers = os.getenv("KAFKA_BROKER")
 app.state.http_client = httpx.AsyncClient(timeout=10.0)
 app.state.queue = asyncio.Queue(maxsize=KAFKA_QUEUE_MAXSIZE)
 

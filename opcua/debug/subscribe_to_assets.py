@@ -1,3 +1,4 @@
+import os
 import time
 from datetime import datetime, timezone
 import openfactory.config as config
@@ -6,7 +7,7 @@ from openfactory.kafka import KSQLDBClient
 
 
 ksql = KSQLDBClient(config.KSQLDB_URL)
-asset = Asset('OPCUA-SENSOR-002', ksqlClient=ksql)
+asset = Asset('OPCUA-SENSOR-002', ksqlClient=ksql, bootstrap_servers=os.getenv("KAFKA_BROKER"))
 
 
 def on_sample(msg_subject, msg_value):

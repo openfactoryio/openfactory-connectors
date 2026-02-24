@@ -57,7 +57,10 @@ class DeviceMonitor:
         self.device = device
         self.app = app
         self.dev_uuid = device.uuid
-        self.asset = Asset(device.uuid, app.state.ksql)
+        self.asset = Asset(
+            device.uuid,
+            ksqlClient=app.state.ksql,
+            bootstrap_servers=app.state.bootstrap_servers)
         self.gateway_id = app.state.gateway_id
         self.global_producer = app.state.global_producer
         self.schema = OPCUAConnectorSchema(**device.connector.model_dump())
