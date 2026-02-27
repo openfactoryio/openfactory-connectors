@@ -235,33 +235,35 @@ async def assign_gateway_id() -> str:
         gateways_rows = []
 
     gateways = {row["GATEWAY_ID"]: row["GATEWAY_HOST"] for row in gateways_rows}
+    logger.debug(gateways)
 
     # Check /status for gateway
-    async def check_status(g_id: str, url: str) -> tuple[str, bool]:
+    async def check_status(g_id: str, url: str) -> tuple[str, str]:
         status_url = f"{url}/status"
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(status_url)
                 resp.raise_for_status()
                 data = resp.json()
-                return g_id, data.get("status") == "AVAILABLE"
+                return g_id, data.get("status")
         except httpx.RequestError as e:
             logger.debug(f"Gateway {g_id} ({url}) not reachable: {e}")
-            return g_id, False
+            return g_id, "DOWN"
         except Exception as e:
             logger.error(f"Unexpected error while checking gateway {g_id} ({url}): {e}", exc_info=True)
-            return g_id, False
+            return g_id, "ERROR"
 
     tasks = [check_status(g_id, url) for g_id, url in gateways.items()]
     results = await asyncio.gather(*tasks)
+    logger.debug(results)
 
-    # Try to find an UNAVAILABLE gateway
-    for g_id, is_available in results:
-        if not is_available:
+    # Check if any gateway is DOWN (a former registered gateway which got shutdown)
+    for g_id, status in results:
+        if status == "DOWN":
             logger.debug(f"Assigning gateway ID {g_id}")
             return g_id
 
-    # No UNAVAILABLE gateway found, generate a new ID
+    # No DOWN gateway found, generate a new ID
     existing_ids = [
         int(g_id.replace("OPCUA-GATEWAY-", ""))
         for g_id in gateways.keys()
@@ -273,7 +275,7 @@ async def assign_gateway_id() -> str:
         new_index += 1
 
     new_id = f"OPCUA-GATEWAY-{new_index}"
-    logger.debug(f"No unavailable gateway found, generated new ID {new_id}")
+    logger.debug(f"No DOWN gateway found, generated new ID {new_id}")
     return new_id
 
 
@@ -396,7 +398,7 @@ async def register_gateway(req: RegisterGatewayRequest):
 
         if req.gateway_id == 'UNAVAILABLE':
 
-            logger.info("Assigning Gateway ID")
+            logger.info(f"Assigning Gateway ID to {gateway_host}...")
             gateway_id = await assign_gateway_id()
             logger.info(f"Assigned {gateway_id}")
 
