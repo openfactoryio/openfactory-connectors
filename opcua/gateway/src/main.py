@@ -153,6 +153,41 @@ async def rebuild_gateway_state(app: FastAPI) -> None:
         logger.error(f"❌ Error rebuilding gateway state for {gateway_id}: {e}")
 
 
+async def wait_for_app_ready(app: FastAPI, url: str = "http://127.0.0.1:8000/status", timeout: float = 5.0):
+    """ Wait until the FastAPI endpoint is reachable. """
+    start = asyncio.get_event_loop().time()
+    async with httpx.AsyncClient() as client:
+        while True:
+            try:
+                r = await client.get(url)
+                if r.status_code == 200:
+                    return
+            except Exception:
+                pass
+
+            if asyncio.get_event_loop().time() - start > timeout:
+                raise RuntimeError("FastAPI app did not become ready and timed out")
+
+            await asyncio.sleep(0.1)
+
+
+async def coordinator_registration_task(app: FastAPI):
+    """ Register gateway with OPC UA Coordinator. """
+    logger = app.state.logger
+    await asyncio.sleep(1)
+    try:
+        logger.info("Waiting for endpoints to be ready...")
+        await wait_for_app_ready(app)
+        logger.info("Registering with OPC UA Coordinator...")
+        await register_gateway(logger, app)
+        logger.info(f"Registered as {app.state.gateway_id}")
+
+        # Rebuild local in-memory state
+        await rebuild_gateway_state(app)
+    except Exception:
+        logger.exception("Unexpected error during registration")
+
+
 async def _kafka_poll_loop_async(app: FastAPI, interval=0.2):
     """
     Continuously poll the Kafka producer in an asynchronous loop to clear delivery reports
@@ -250,13 +285,8 @@ async def lifespan(app: FastAPI):
     Yields:
         None
     """
-    # Register with coordinator
-    app.state.logger.info('Waiting for OPC UA Coordinator registration ...')
-    try:
-        await register_gateway(app.state.logger, app)
-        app.state.logger.info(f'Registered Gateway as {app.state.gateway_id}')
-    except Exception as e:
-        app.state.logger.error(f"Failed to register gateway at startup: {e}")
+    # ---- STARTUP PHASE ----
+    app.state.logger.info("Starting OPC UA Gateway...")
 
     gateway_metrics.BUILD_INFO.info({
         "version": os.environ.get('APPLICATION_VERSION', 'UNKNOWN'),
@@ -282,13 +312,24 @@ async def lifespan(app: FastAPI):
     writer_task.add_done_callback(lambda t: log_task_exceptions(t, "_kafka_writer_loop_async"))
     app.state._kafka_writer_task = writer_task
 
-    # Rebuild local in-memory state before starting anything
-    await rebuild_gateway_state(app)
+    # Register with coordinator
+    app.state._registration_task = asyncio.create_task(coordinator_registration_task(app))
+    app.state._registration_task.add_done_callback(lambda t: log_task_exceptions(t, "coordinator_registration_task"))
 
     yield  # <-- control returns to FastAPI while the app is running
 
     # App shutdown logic
     app.state.logger.info("Shutting down OPC UA Gateway ...")
+
+    # Stop registration task (most often will not be running)
+    if hasattr(app.state, "_registration_task"):
+        task = app.state._registration_task
+        if not task.done():  # only cancel if still running
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                app.state.logger.info("Coordinator registration task stopped cleanly.")
 
     # Stop poll thread
     if hasattr(app.state, "_kafka_poll_task"):
