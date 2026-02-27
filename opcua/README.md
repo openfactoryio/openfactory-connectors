@@ -42,11 +42,12 @@ Together, they allow OpenFactory to handle **many devices across multiple factor
 
 ### Environment Variables (Gateway)
 
-| Variable                  | Description                    | Default     |
-| ------------------------- | ------------------------------ | ----------- |
-| `KAFKA_BROKER`            | Kafka bootstrap server address | Must be set |
-| `KSQLDB_URL`              | ksqlDB URL                     | Must be set |
-| `OPCUA_GATEWAY_LOG_LEVEL` | Log level                      | INFO        |
+| Variable                  | Description                           | Default     |
+| ------------------------- | ------------------------------------- | ----------- |
+| `KAFKA_BROKER`            | Kafka bootstrap server address        | Must be set |
+| `KSQLDB_URL`              | ksqlDB URL                            | Must be set |
+| `ASSET_ROUTER_URL`        | Asset Router URL (from fan-out layer) | Must be set |
+| `OPCUA_GATEWAY_LOG_LEVEL` | Log level                             | INFO        |
 
 ## 📋 Prerequisites
 
@@ -73,6 +74,7 @@ services:
       - COORDINATOR_URL=http://opcua-coordinator:8000
       - KAFKA_BROKER=${KAFKA_BROKER}
       - KSQLDB_URL=${KSQLDB_URL}
+      - ASSET_ROUTER_URL=${ASSET_ROUTER_URL}
       - OPCUA_GATEWAY_LOG_LEVEL=INFO
     networks:
       - factory-net
