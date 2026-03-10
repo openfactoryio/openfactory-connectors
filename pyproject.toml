@@ -5,10 +5,10 @@ description = "A collection of device connectors for OpenFactory."
 requires-python = ">=3.12"
 dependencies = [
     "OpenFactory @ git+https://github.com/openfactoryio/openfactory-core.git@v0.5.2",
-    "fastapi",
-    "uvicorn",
-    "prometheus-client",
-    "uvloop",
+    "fastapi>=0.110.0,<1.0",
+    "uvicorn>=0.29.0,<1.0",
+    "prometheus-client>=0.20.0,<1.0",
+    "uvloop>=0.19.0,<1.0"
 ]
 
 [project.optional-dependencies]
