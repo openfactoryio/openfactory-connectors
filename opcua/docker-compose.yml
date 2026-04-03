@@ -60,6 +60,7 @@ services:
       - NODE_HOSTNAME={{.Node.Hostname}}
       - KAFKA_BROKER=${KAFKA_BROKER}
       - KSQLDB_URL=${KSQLDB_URL}
+      - ASSET_ROUTER_URL=${ASSET_ROUTER_URL}
     ports:
       - "8000:8000"
     networks:
