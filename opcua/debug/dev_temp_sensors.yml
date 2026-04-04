@@ -25,6 +25,11 @@ devices:
           queue_size: 1                     # default per monitored item
           sampling_interval: 0              # ms, 0 = event-driven
 
+      constants:
+        sensor_model: 
+          node_id: ns=2;i=3
+          tag: SensorModel
+
       variables:
         temp:
           browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor1/2:Temperature
@@ -36,9 +41,6 @@ devices:
           browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor1/2:TemperatureUnit
           tag: TemperatureUnit
           access_level: rw
-        sensor_model: 
-          node_id: ns=2;i=3
-          tag: SensorModel
 
       events:
         sensor_events:
@@ -64,6 +66,11 @@ devices:
           queue_size: 1                     # default per monitored item
           sampling_interval: 0              # ms, 0 = event-driven
 
+      constants:
+        sensor_model: 
+          node_id: ns=2;i=10
+          tag: SensorModel
+
       variables:
         temp:
           node_id: ns=2;i=12
@@ -71,9 +78,6 @@ devices:
         hum:
           browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor2/2:Humidity
           tag: Humidity
-        sensor_model: 
-          node_id: ns=2;i=10
-          tag: SensorModel
 
       events:
         sensor_events:
