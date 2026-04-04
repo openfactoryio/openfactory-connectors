@@ -22,6 +22,7 @@ import re
 import unicodedata
 import json
 from typing import Any, List
+from numbers import Number
 from fastapi import FastAPI
 from asyncua import Client, Node, ua
 from asyncua.common.ua_utils import string_to_val
@@ -29,6 +30,7 @@ from openfactory.schemas.devices import Device
 from openfactory.schemas.connectors.opcua import OPCUAConnectorSchema
 from openfactory.schemas.command_header import CommandEnvelope
 from openfactory.assets import Asset, AssetAttribute
+from openfactory.assets.utils import openfactory_timestamp
 from .subscription import SubscriptionHandler
 from .state import _active_device_defs
 from .utils import get_node_by_path
@@ -162,6 +164,7 @@ class DeviceMonitor:
             )
 
             await self._discover_methods(client)
+            await self._read_constants(client)
             await self._subscribe_variables(client, handler)
             await self._subscribe_events(client)
 
@@ -361,6 +364,40 @@ class DeviceMonitor:
                     asyncio.create_task(self.call_opcua_method(cmd=cmd, envelope=envelope))
 
                 self.asset.subscribe_to_attribute(f'{command}_CMD', on_cmd)
+
+    async def _read_constants(self, client: Client) -> None:
+        """
+        Read all configured constants.
+
+        Args:
+            client (Client): Connected OPC UA client
+        """
+        if not self.schema.constants:
+            return
+        for local_name, const_cfg in self.schema.constants.items():
+            try:
+                if const_cfg.browse_path is not None:
+                    const_node = await get_node_by_path(client, const_cfg.browse_path)
+                else:
+                    const_node = client.get_node(const_cfg.node_id)
+
+                dv = await const_node.read_data_value()
+                attr = AssetAttribute(
+                    id=local_name,
+                    value=dv.Value.Value,
+                    type="Samples" if isinstance(dv.Value.Value, Number) else "Events",
+                    tag=const_cfg.tag,
+                    timestamp=openfactory_timestamp(dv.SourceTimestamp)
+                    )
+                self.asset.add_attribute(asset_attribute=attr)
+                self.log.info(f"[{self.dev_uuid}] Aquired constant '{local_name}' ({const_node.nodeid.to_string()}): {dv.Value.Value}")
+            except ValueError as e:
+                self.log.error(f"[{self.dev_uuid}] Failed to read '{local_name}' ({const_node.nodeid.to_string()}):{e}")
+            except Exception as e:
+                self.log.error(
+                    f"[{self.dev_uuid}] Failed to to read '{local_name}' ({const_node.nodeid.to_string()}): {e}",
+                    exc_info=True
+                    )
 
     async def _subscribe_variables(self, client: Client, handler: SubscriptionHandler) -> None:
         """
