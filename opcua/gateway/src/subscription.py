@@ -11,7 +11,6 @@ Key components:
   for a specific OPC UA device UUID.
 """
 
-import datetime
 from fastapi import FastAPI
 from numbers import Number
 from typing import Any
@@ -19,7 +18,7 @@ from asyncua import ua, Client
 from asyncua.common.node import Node
 from openfactory.assets import AssetAttribute
 from openfactory.assets.utils import openfactory_timestamp, current_timestamp
-from .utils import opcua_data_timestamp, opcua_event_timestamp
+from .utils import opcua_data_timestamp, opcua_event_timestamp, normalize_value
 
 
 class SubscriptionHandler:
@@ -57,39 +56,6 @@ class SubscriptionHandler:
         # Cache mapping: Node -> {"local_name": str, "browse_name": str}
         self.node_map: dict = {}
 
-    def normalize_value(self, val: object) -> Any:
-        """
-        Convert OPC UA values into clean Python-native ones.
-
-        Args:
-            val (object): The new value of the variable.
-
-        Returns:
-            normalized value (Any)
-        """
-        # LocalizedText → return its text
-        if isinstance(val, ua.LocalizedText):
-            return val.Text
-
-        # ByteString → return hex string instead of raw bytes
-        if isinstance(val, (bytes, bytearray)):
-            return list(val)
-
-        # Arrays → normalize each element
-        if isinstance(val, list):
-            return [self.normalize_value(v) for v in val]
-
-        # ua.Variant: unwrap
-        if isinstance(val, ua.Variant):
-            return self.normalize_value(val.Value)
-
-        # datetime.datetime → return as str
-        if isinstance(val, datetime.datetime):
-            return str(val)
-
-        # fallback: return as-is
-        return val
-
     async def datachange_notification(self, node: Node, val: object, data: ua.DataChangeNotification) -> None:
         """
         Handle OPC UA data change notifications.
@@ -116,7 +82,7 @@ class SubscriptionHandler:
         deadband = info.get("deadband", 0)
 
         # normalize value
-        val = self.normalize_value(val)
+        val = normalize_value(val)
 
         # Determine OpenFactory type based on value type
         ofa_type = "Samples" if isinstance(val, Number) else "Events"

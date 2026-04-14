@@ -33,7 +33,7 @@ from openfactory.assets import Asset, AssetAttribute
 from openfactory.assets.utils import openfactory_timestamp
 from .subscription import SubscriptionHandler
 from .state import _active_device_defs
-from .utils import get_node_by_path
+from .utils import get_node_by_path, normalize_value
 
 
 class DeviceMonitor:
@@ -384,7 +384,7 @@ class DeviceMonitor:
                 dv = await const_node.read_data_value()
                 attr = AssetAttribute(
                     id=local_name,
-                    value=dv.Value.Value,
+                    value=normalize_value(dv.Value.Value),
                     type="Samples" if isinstance(dv.Value.Value, Number) else "Events",
                     tag=const_cfg.tag,
                     timestamp=openfactory_timestamp(dv.SourceTimestamp)

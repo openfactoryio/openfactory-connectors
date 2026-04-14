@@ -156,3 +156,37 @@ async def get_node_by_path(client: Client, path: str) -> Node | None:
         )
 
         raise ValueError(msg) from exc
+
+
+def normalize_value(val: object) -> Any:
+    """
+    Convert OPC UA values into clean Python-native ones.
+
+    Args:
+        val (object): The new value of the variable.
+
+    Returns:
+        normalized value (Any)
+    """
+    # LocalizedText → return its text
+    if isinstance(val, ua.LocalizedText):
+        return val.Text
+
+    # ByteString → return hex string instead of raw bytes
+    if isinstance(val, (bytes, bytearray)):
+        return list(val)
+
+    # Arrays → normalize each element
+    if isinstance(val, list):
+        return [normalize_value(v) for v in val]
+
+    # ua.Variant: unwrap
+    if isinstance(val, ua.Variant):
+        return normalize_value(val.Value)
+
+    # datetime → return as str
+    if isinstance(val, datetime):
+        return str(val)
+
+    # fallback: return as-is
+    return val
