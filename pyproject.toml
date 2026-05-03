@@ -13,6 +13,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "fastapi",
+    "asyncua",
     "flake8",
     "tomlkit",
 ]
