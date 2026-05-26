@@ -291,7 +291,7 @@ async def lifespan(app: FastAPI):
     gateway_metrics.BUILD_INFO.info({
         "version": os.environ.get('APPLICATION_VERSION', 'UNKNOWN'),
         "swarm_node": os.environ.get('NODE_HOSTNAME', 'unknown'),
-        "gateway": app.state.gateway_id
+        "gateway": "UNAVAILABLE"
     })
 
     # Create global producer
