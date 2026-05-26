@@ -2,9 +2,11 @@ import asyncio
 import socket
 import logging
 import httpx
+import os
 from fastapi import FastAPI
 from .config import COORDINATOR_URL, OPCUA_GATEWAY_PORT
 from .state import _active_device_defs
+from . import gateway_metrics as gateway_metrics
 
 GATEWAY_RETRY_INTERVAL = 30  # seconds
 
@@ -75,6 +77,14 @@ async def register_gateway(logger: logging.Logger, app: FastAPI) -> str:
 
             # --- Success
             app.state.gateway_id = gateway_id
+
+            # Register general info in metrics
+            gateway_metrics.BUILD_INFO.info({
+                "version": os.environ.get('APPLICATION_VERSION', 'UNKNOWN'),
+                "swarm_node": os.environ.get('NODE_HOSTNAME', 'unknown'),
+                "gateway": gateway_id
+            })
+
             logger.info(f"✅ Gateway registered successfully: {g_host} with ID {gateway_id}")
             return gateway_id
 
