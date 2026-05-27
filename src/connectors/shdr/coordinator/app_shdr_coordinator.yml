@@ -1,0 +1,26 @@
+# ---------------------------------------------------------------------------------------
+# 🏭 OpenFactory App configuration file for the SHDR Coordinator
+#
+# Deploy with:
+#   ofa device up app_shdr_coordinator.yml
+# ---------------------------------------------------------------------------------------
+# Environment variables:
+#
+# Optional:
+#   SHDR_COORDINATOR_LOG_LEVEL    Log level (default: INFO)
+#
+# ---------------------------------------------------------------------------------------
+
+apps:
+
+  shdr-coordinator:
+    uuid: SHDR-COORDINATOR
+    image: shdr-coordinator
+    environment:
+      - LOG_LEVEL=${SHDR_COORDINATOR_LOG_LEVEL:-DEBUG}
+    routing:
+      expose: true
+      port: 4000
+      hostname: shdr-coordinator
+    networks:
+      - factory-net
