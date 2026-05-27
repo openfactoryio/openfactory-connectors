@@ -27,7 +27,7 @@ class BaseGateway(OpenFactoryFastAPIApp):
             test_mode: Enables test mode (disables live Kafka/ksql interaction).
 
         See also:
-            :class:`OpenFactoryFastAPIApp` for full initialization 
+            :class:`OpenFactoryFastAPIApp` for full initialization
             details and environment variable handling.
         """
         if self.CONNECTOR_NAME is None:
