@@ -25,16 +25,13 @@ class BaseCoordinator(OpenFactoryFastAPIApp):
             test_mode: Enables test mode (disables live Kafka/ksql interaction).
 
         See also:
-            :class:`OpenFactoryFastAPIApp` for full initialization 
+            :class:`OpenFactoryFastAPIApp` for full initialization
             details and environment variable handling.
         """
         if self.CONNECTOR_NAME is None:
             raise NotImplementedError(f"{self.__class__.__name__} must define CONNECTOR_NAME")
 
         super().__init__(*args, **kwargs)
-
-        # internal index for assignment algorithm
-        self._gateway_rr_index = 0
 
         # expose OFA app inside FastAPI
         self.api.state.ofa_app = self
@@ -79,17 +76,12 @@ class BaseCoordinator(OpenFactoryFastAPIApp):
             self.register_gateway(gateway['ASSET_UUID'])
         self.logger.info(f"Discovered all deployed gateways: {str(self.gateways)}")
 
-    def assign_gateway(self):
-        if not self.gateways:
-            raise RuntimeError("No gateways available")
-
-        gateway_uuid = self.gateways[self._gateway_rr_index]
-
-        self._gateway_rr_index = (
-            self._gateway_rr_index + 1
-        ) % len(self.gateways)
-
-        return gateway_uuid
+    def assign_gateway(self) -> str:
+        """
+        Assign a gateway using a round-robin strategy.
+        Children must override this class
+        """
+        raise NotImplementedError(f"{self.__class__.__name__} must implement assign_gateway()")
 
     def get_assigned_gateway_uuid(self, device_uuid: str) -> tuple[str, str] | None:
         """
