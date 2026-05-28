@@ -113,7 +113,6 @@ class BaseCoordinator(OpenFactoryFastAPIApp):
             return
         gateway_uuid = self.assign_gateway()
         self.logger.info(f"Registering new device {device.uuid} with Gateway '{gateway_uuid}'")
-        self.logger.debug(f"Config {device_config}")
         gateway = Asset(asset_uuid=gateway_uuid, ksqlClient=self.ksql)
         if gateway.avail.value != "AVAILABLE":
             self.logger.warning(f"Gateway '{gateway.asset_uuid}' is not AVAILABLE")
@@ -146,6 +145,10 @@ class BaseCoordinator(OpenFactoryFastAPIApp):
             self.logger.warning(f"Failed to deregister device {device_uuid}")
         try:
             gateway.deregister_device(sender_uuid=self.asset_uuid, device_uuid=device_uuid)
+            self.producer.produce(
+                topic=f"{self.CONNECTOR_NAME.lower()}_device_assignment_topic",
+                key=device_uuid,
+                value=None)
         except TypeError:
             self.logger.warning(f"Asset '{gateway.asset_uuid}' does not appear to be a valid gateway.")
             self.logger.warning(f"Failed to deregister device {device_uuid}")
