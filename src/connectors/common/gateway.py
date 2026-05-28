@@ -194,3 +194,4 @@ class BaseGateway(OpenFactoryFastAPIApp):
         device_uuid: Annotated[str, "Device UUID"],
     ):
         self.logger.info(f"Deregistering device {device_uuid}")
+        self.deconnect_device(device_uuid)
