@@ -11,7 +11,6 @@ from openfactory.assets import Asset
 class BaseGateway(OpenFactoryFastAPIApp):
 
     CONNECTOR_NAME: str | None = None
-    COORDINATOR_UUID: str | None = None
 
     def __init__(self, *args, **kwargs):
         """
@@ -33,8 +32,6 @@ class BaseGateway(OpenFactoryFastAPIApp):
         """
         if self.CONNECTOR_NAME is None:
             raise NotImplementedError(f"{self.__class__.__name__} must define CONNECTOR_NAME")
-        if self.COORDINATOR_UUID is None:
-            raise NotImplementedError(f"{self.__class__.__name__} must define COORDINATOR_UUID")
 
         super().__init__(*args, **kwargs)
 
@@ -44,6 +41,9 @@ class BaseGateway(OpenFactoryFastAPIApp):
         # redefine the Asset type
         self.wait_until(attribute_id='AssetType', value='OpenFactoryApp')
         self.AssetType = f'{self.CONNECTOR_NAME}.Gateway'
+
+        # discover coordinator
+        self._discover_coordinator()
 
         # register gateway with coordinator
         self.coordinator = Asset(asset_uuid=self.COORDINATOR_UUID, ksqlClient=self.ksql)
@@ -73,6 +73,20 @@ class BaseGateway(OpenFactoryFastAPIApp):
             device (Device): The device to deconnect.
         """
         pass
+
+    def _discover_coordinator(self) -> None:
+        """ Discover connector coordinator """
+        self.logger.info(f"Discovering {self.CONNECTOR_NAME} coordinator")
+        query = f"select ASSET_UUID FROM ASSETS_TYPE WHERE TYPE='{self.CONNECTOR_NAME}.Coordinator';"
+        while True:
+            res = self.ksql.query(query)
+            if res:
+                self.COORDINATOR_UUID = res[0]["ASSET_UUID"]
+                self.logger.info(f"Found {self.CONNECTOR_NAME} coordinator {self.COORDINATOR_UUID}")
+                break
+
+            self.logger.debug(f"{self.CONNECTOR_NAME} coordinator not found yet")
+            time.sleep(1)
 
     def _get_coordinator(self) -> Asset:
         """
