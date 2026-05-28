@@ -139,7 +139,11 @@ class SHDRGateway(BaseGateway):
                     parsed = self.parse_shdr_line(line)
                     timestamp = parsed["timestamp"]
                     for key, value in parsed["values"].items():
-                        self.logger.debug(f"[{device.uuid}] ({timestamp}) {key}={value}")
+                        datapoint = connector.data.get(key)
+                        if datapoint is None:
+                            self.logger.warning(f"Unknown SHDR key '{key}' for device {device.uuid}")
+                            continue
+                        self.logger.debug(f"[{device.uuid}] ({timestamp}) {key}={value} tag={datapoint.tag}")
 
             except asyncio.CancelledError:
                 self.logger.info(f"Stopping device loop for {device.uuid}")
