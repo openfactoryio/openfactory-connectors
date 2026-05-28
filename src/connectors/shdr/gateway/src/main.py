@@ -3,7 +3,9 @@ import os
 from datetime import datetime, timezone
 from openfactory.kafka import KSQLDBClient
 from openfactory.schemas.devices import Device
+from openfactory.assets import AssetAttribute
 from connectors.common.gateway import BaseGateway
+from connectors.common.kafka_producer import GlobalAssetProducer
 
 
 class SHDRGateway(BaseGateway):
@@ -20,6 +22,9 @@ class SHDRGateway(BaseGateway):
 
         # device configs
         self.devices: dict[str, Device] = {}
+
+        # Global Kafka Producer
+        self.global_producer = GlobalAssetProducer(ksqlClient=self.ksql)
 
     def connect_device(self, device: Device):
         """
@@ -113,6 +118,15 @@ class SHDRGateway(BaseGateway):
                 reader, writer = await asyncio.wait_for(
                     asyncio.open_connection(str(connector.host), connector.port), timeout=5)
                 self.logger.info(f"Connected to {device.uuid}")
+                self.global_producer.send(
+                    asset_uuid=device.uuid,
+                    asset_attribute=AssetAttribute(
+                        id='avail',
+                        value='AVAILABLE',
+                        type='Events',
+                        tag='Availability'
+                        )
+                    )
 
                 while True:
                     line = await reader.readline()
@@ -133,11 +147,29 @@ class SHDRGateway(BaseGateway):
 
             except Exception as e:
                 self.logger.warning(f"{device.uuid} disconnected: {e}")
+                self.global_producer.send(
+                    asset_uuid=device.uuid,
+                    asset_attribute=AssetAttribute(
+                        id='avail',
+                        value='UNAVAILABLE',
+                        type='Events',
+                        tag='Availability'
+                        )
+                    )
                 await asyncio.sleep(5)
 
             finally:
                 if writer is not None:
                     self.logger.info(f"Closing TCP connection to {device.uuid}")
+                    self.global_producer.send(
+                        asset_uuid=device.uuid,
+                        asset_attribute=AssetAttribute(
+                            id='avail',
+                            value='UNAVAILABLE',
+                            type='Events',
+                            tag='Availability'
+                            )
+                        )
                     writer.close()
                     try:
                         await writer.wait_closed()
