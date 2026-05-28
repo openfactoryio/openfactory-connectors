@@ -1,5 +1,6 @@
 import json
 import time
+import asyncio
 from typing import Annotated
 from openfactory.exceptions import OFAException
 from openfactory.apps import OpenFactoryFastAPIApp, ofa_method
@@ -40,9 +41,8 @@ class BaseGateway(OpenFactoryFastAPIApp):
         # expose OFA app inside FastAPI
         self.api.state.ofa_app = self
 
-        # rebuild Gateway state
+        # wait for all ksqlDB tables created by coordinator to be ready
         self.wait_for_existience_of_tables()
-        self.rebuild_gateway_state()
 
         # redefine the Asset type
         self.wait_until(attribute_id='AssetType', value='OpenFactoryApp')
@@ -179,7 +179,6 @@ class BaseGateway(OpenFactoryFastAPIApp):
         self,
         device_config: Annotated[str, "Device configuration"],
     ):
-        self.logger.debug(f"Config {device_config}")
         try:
             cfg = json.loads(device_config)
             device = Device(**cfg)
@@ -195,3 +194,9 @@ class BaseGateway(OpenFactoryFastAPIApp):
     ):
         self.logger.info(f"Deregistering device {device_uuid}")
         self.deconnect_device(device_uuid)
+
+    async def async_main_loop(self):
+        """ asynchronous main loop """
+        self.rebuild_gateway_state()
+        while True:
+            await asyncio.sleep(3600)
