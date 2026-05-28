@@ -143,6 +143,8 @@ class BaseCoordinator(OpenFactoryFastAPIApp):
         if gateway.avail.value != "AVAILABLE":
             self.logger.warning(f"Gateway '{gateway.asset_uuid}' is not AVAILABLE")
             self.logger.warning(f"Failed to deregister device {device_uuid}")
+            gateway.close()
+            return
         try:
             gateway.deregister_device(sender_uuid=self.asset_uuid, device_uuid=device_uuid)
             self.producer.produce(
@@ -152,6 +154,7 @@ class BaseCoordinator(OpenFactoryFastAPIApp):
         except TypeError:
             self.logger.warning(f"Asset '{gateway.asset_uuid}' does not appear to be a valid gateway.")
             self.logger.warning(f"Failed to deregister device {device_uuid}")
+        gateway.close()
 
     @ofa_method(description="Register a Gateway")
     def register_gateway(
