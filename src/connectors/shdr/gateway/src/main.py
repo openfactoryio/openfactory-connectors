@@ -143,6 +143,16 @@ class SHDRGateway(BaseGateway):
                         if datapoint is None:
                             self.logger.warning(f"Unknown SHDR key '{key}' for device {device.uuid}")
                             continue
+                        self.global_producer.send(
+                            asset_uuid=device.uuid,
+                            asset_attribute=AssetAttribute(
+                                id=key,
+                                value=value,
+                                type=datapoint.type,
+                                tag=datapoint.tag,
+                                timestamp=timestamp
+                                )
+                            )
                         self.logger.debug(f"[{device.uuid}] ({timestamp}) {key}={value} tag={datapoint.tag}")
 
             except asyncio.CancelledError:
