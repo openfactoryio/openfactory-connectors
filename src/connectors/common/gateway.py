@@ -5,7 +5,7 @@ from typing import Annotated
 from openfactory.exceptions import OFAException
 from openfactory.apps import OpenFactoryFastAPIApp, ofa_method
 from openfactory.schemas.devices import Device
-from openfactory.assets import Asset
+from openfactory.assets import Asset, AssetAttribute
 
 
 class BaseGateway(OpenFactoryFastAPIApp):
@@ -194,6 +194,16 @@ class BaseGateway(OpenFactoryFastAPIApp):
             cfg = json.loads(device_config)
             device = Device(**cfg)
             self.logger.info(f"Registering device {device.uuid}")
+            asset = Asset(device.uuid, ksqlClient=self.ksql)
+            asset.add_attribute(
+                AssetAttribute(
+                    id='gateway',
+                    type='Events',
+                    tag=f'{self.CONNECTOR_NAME}.Gateway',
+                    value=self.asset_uuid
+                )
+            )
+            asset.close()
             self.connect_device(device)
         except Exception as e:
             self.logger.warning(f"Failed to connect device {device_config}: {e}", exc_info=True)
