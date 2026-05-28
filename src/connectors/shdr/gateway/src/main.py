@@ -13,15 +13,15 @@ class SHDRGateway(BaseGateway):
     CONNECTOR_NAME = "SHDR"
     COORDINATOR_UUID = "SHDR-COORDINATOR"
 
+    # active device runtimes
+    device_tasks: dict[str, asyncio.Task] = {}
+
+    # device configs
+    devices: dict[str, Device] = {}
+
     def __init__(self, *args, **kwargs):
 
         super().__init__(*args, **kwargs)
-
-        # active device runtimes
-        self.device_tasks: dict[str, asyncio.Task] = {}
-
-        # device configs
-        self.devices: dict[str, Device] = {}
 
         # Global Kafka Producer
         self.global_producer = GlobalAssetProducer(ksqlClient=self.ksql)
@@ -37,17 +37,13 @@ class SHDRGateway(BaseGateway):
             self.logger.warning(f"Device {device.uuid} is not an SHDR device.")
             self.logger.warning(f"Abort registration of {device.uuid}.")
             return
-        self.logger.info(f"Connecting device {device.uuid}")
-
         if device.uuid in self.device_tasks:
             self.logger.warning(f"Device {device.uuid} already connected")
             return
 
         self.devices[device.uuid] = device
-
         task = asyncio.create_task(self._device_loop(device))
         self.device_tasks[device.uuid] = task
-        self.logger.info(f"Started SHDR task for {device.uuid}")
 
     def deconnect_device(self, device_uuid: str):
         """
@@ -65,7 +61,6 @@ class SHDRGateway(BaseGateway):
 
         task.cancel()
         self.devices.pop(device_uuid, None)
-        self.logger.info(f"Stopped SHDR task for {device_uuid}")
 
     def _utc_now_iso(self) -> str:
         """ Return current UTC timestamp in ISO-8601 format. """
@@ -107,6 +102,7 @@ class SHDRGateway(BaseGateway):
 
     async def _device_loop(self, device: Device):
 
+        self.logger.info(f"Starting SHDR monitoring task for {device.uuid}")
         connector = device.connector
 
         while True:
@@ -156,7 +152,7 @@ class SHDRGateway(BaseGateway):
                         self.logger.debug(f"[{device.uuid}] ({timestamp}) {key}={value} tag={datapoint.tag}")
 
             except asyncio.CancelledError:
-                self.logger.info(f"Stopping device loop for {device.uuid}")
+                self.logger.debug(f"Stopping SHDR monitoring task for {device.uuid}")
                 raise
 
             except Exception as e:
@@ -174,7 +170,7 @@ class SHDRGateway(BaseGateway):
 
             finally:
                 if writer is not None:
-                    self.logger.info(f"Closing TCP connection to {device.uuid}")
+                    self.logger.debug(f"Closing TCP connection to {device.uuid}")
                     self.global_producer.send(
                         asset_uuid=device.uuid,
                         asset_attribute=AssetAttribute(
@@ -189,6 +185,7 @@ class SHDRGateway(BaseGateway):
                         await writer.wait_closed()
                     except Exception:
                         pass
+                self.logger.info(f"Stopped SHDR monitoring task for {device.uuid}")
 
 
 app = SHDRGateway(

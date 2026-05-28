@@ -41,9 +41,6 @@ class BaseGateway(OpenFactoryFastAPIApp):
         # expose OFA app inside FastAPI
         self.api.state.ofa_app = self
 
-        # wait for all ksqlDB tables created by coordinator to be ready
-        self.wait_for_existience_of_tables()
-
         # redefine the Asset type
         self.wait_until(attribute_id='AssetType', value='OpenFactoryApp')
         self.AssetType = f'{self.CONNECTOR_NAME}.Gateway'
@@ -197,6 +194,12 @@ class BaseGateway(OpenFactoryFastAPIApp):
 
     async def async_main_loop(self):
         """ asynchronous main loop """
+
+        # wait for all ksqlDB tables created by coordinator to be ready
+        self.wait_for_existience_of_tables()
+
+        # rebuild state
         self.rebuild_gateway_state()
+
         while True:
             await asyncio.sleep(3600)
