@@ -11,7 +11,6 @@ from connectors.common.kafka_producer import GlobalAssetProducer
 class SHDRGateway(BaseGateway):
 
     CONNECTOR_NAME = "SHDR"
-    COORDINATOR_UUID = "SHDR-COORDINATOR"
 
     # active device runtimes
     device_tasks: dict[str, asyncio.Task] = {}
