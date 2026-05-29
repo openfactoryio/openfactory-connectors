@@ -1,4 +1,7 @@
+import json
 import unittest
+from unittest.mock import patch
+from openfactory.schemas.devices import Device
 from connectors.common.coordinator import BaseCoordinator
 
 
@@ -23,6 +26,7 @@ class FakeKSQLClient:
 class ExampleCoordinator(BaseCoordinator):
     """ Concrete coordinator used to exercise BaseCoordinator behavior. """
     CONNECTOR_NAME = "TEST"
+    asset_uuid = "COORDINATOR"
 
     def assign_gateway(self):
         return "TEST-GATEWAY"
@@ -48,10 +52,19 @@ class FakeAsset:
         self.deregister_calls = []
         self.closed = False
 
+        self.raise_register_type_error = False
+        self.raise_deregister_type_error = False
+
     def register_device(self, **kwargs):
+        if self.raise_register_type_error:
+            raise TypeError()
+
         self.register_calls.append(kwargs)
 
     def deregister_device(self, **kwargs):
+        if self.raise_deregister_type_error:
+            raise TypeError()
+
         self.deregister_calls.append(kwargs)
 
     def close(self):
@@ -68,10 +81,42 @@ class FakeProducer:
         self.messages.append(kwargs)
 
 
+# Minimal valid OpenFactory Device configuration used throughout this test suite.
+#
+# IMPORTANT:
+# If test_valid_device_fixture() starts failing, the OpenFactory Device or
+# Connector schema has likely changed. In that case, update this fixture
+# first before investigating failures in the coordinator tests below.
+#
+# Most registration tests depend on this fixture reaching the gateway
+# registration logic. An invalid fixture will cause those tests to fail
+# early during Device validation, producing misleading failures.
+VALID_DEVICE_JSON = """
+{
+    "uuid": "DEVICE1",
+    "connector": {
+        "type": "shdr",
+        "host": "127.0.0.1",
+        "port": 7878
+    }
+}
+"""
+
+
 class BaseCoordinatorTests(unittest.TestCase):
     """
     Unittests for BaseCoordinator
     """
+
+    def test_valid_device_fixture(self):
+        """
+        Test that VALID_DEVICE_JSON remains a valid OpenFactory Device.
+
+        If this test fails, the OpenFactory Device or Connector schema has
+        likely changed and the fixture VALID_DEVICE_JSON must be updated. Fix this test
+        before investigating failures in other coordinator registration tests.
+        """
+        Device(**json.loads(VALID_DEVICE_JSON))
 
     def test_requires_connector_name(self):
         """ Test that CONNECTOR_NAME must be defined. """
@@ -170,7 +215,179 @@ class BaseCoordinatorTests(unittest.TestCase):
     def test_register_device_invalid_json_is_ignored(self):
         """ Test invalid device JSON is ignored. """
         coordinator = ExampleCoordinator(ksqlClient=FakeKSQLClient(), test_mode=True)
-        coordinator.register_device("not-json")
+
+        with patch.object(coordinator.logger, "warning") as warning:
+            coordinator.register_device("not-json")
+
+        self.assertIn("Failed to register device not-json", warning.call_args[0][0])
+
+    @patch("connectors.common.coordinator.Asset")
+    def test_register_device_records_assignment(self, asset_cls):
+        """ Test successful device registration records assignment. """
+        ksql = FakeKSQLClient()
+
+        asset_cls.return_value = FakeAsset("TEST-GATEWAY")
+
+        coordinator = ExampleCoordinator(ksqlClient=ksql, test_mode=True)
+        coordinator.register_device(VALID_DEVICE_JSON)
+
+        self.assertEqual(len(ksql.inserts), 1)
+
+        self.assertEqual(
+            ksql.inserts[0][0],
+            coordinator.assignment_source_table
+        )
+
+        self.assertEqual(
+            ksql.inserts[0][1][0]["DEVICE_UUID"],
+            "DEVICE1"
+        )
+
+        self.assertEqual(
+            ksql.inserts[0][1][0]["GATEWAY_UUID"],
+            "TEST-GATEWAY"
+        )
+
+    @patch("connectors.common.coordinator.Asset")
+    def test_register_device_skips_unavailable_gateway(self, asset_cls):
+        """ Test device registration fails if gateway is unavailable. """
+        asset = FakeAsset("TEST-GATEWAY")
+        asset.avail.value = "UNAVAILABLE"
+        asset_cls.return_value = asset
+
+        coordinator = ExampleCoordinator(ksqlClient=FakeKSQLClient(), test_mode=True)
+
+        with patch.object(coordinator.logger, "warning") as warning:
+            coordinator.register_device(VALID_DEVICE_JSON)
+
+        warning_messages = [
+            call.args[0]
+            for call in warning.call_args_list
+        ]
+
+        self.assertIn(
+            "Gateway 'TEST-GATEWAY' is not AVAILABLE",
+            warning_messages
+        )
+
+    @patch("connectors.common.coordinator.Asset")
+    def test_register_device_handles_invalid_gateway_asset(self, asset_cls):
+        """ Test invalid gateway assets are handled gracefully. """
+        asset = FakeAsset("TEST-GATEWAY")
+        asset.raise_register_type_error = True
+        asset_cls.return_value = asset
+
+        coordinator = ExampleCoordinator(ksqlClient=FakeKSQLClient(), test_mode=True)
+
+        with patch.object(coordinator.logger, "warning") as warning:
+            coordinator.register_device(VALID_DEVICE_JSON)
+
+        warning_messages = [
+            call.args[0]
+            for call in warning.call_args_list
+        ]
+
+        self.assertIn(
+            f"Asset '{asset.asset_uuid}' does not appear to be a valid gateway.",
+            warning_messages
+        )
+
+    def test_deregister_device_without_assignment_returns(self):
+        """ Test deregistration aborts when no gateway is assigned. """
+        coordinator = ExampleCoordinator(ksqlClient=FakeKSQLClient(), test_mode=True)
+        coordinator.producer = FakeProducer()
+        coordinator.get_assigned_gateway_uuid = lambda _: None
+
+        with patch.object(coordinator.logger, "warning") as warning:
+            coordinator.deregister_device("DEVICE1")
+
+        warning_messages = [
+            call.args[0]
+            for call in warning.call_args_list
+        ]
+
+        self.assertIn(
+            "Aborting deregistration as no associated Gateway was found",
+            warning_messages
+        )
+
+        # no message was sent
+        self.assertEqual(len(coordinator.producer.messages), 0)
+
+    @patch("connectors.common.coordinator.Asset")
+    def test_deregister_device_produces_tombstone(self, asset_cls):
+        """ Test successful deregistration produces assignment tombstone. """
+        asset_cls.return_value = FakeAsset("GW1")
+
+        coordinator = ExampleCoordinator(ksqlClient=FakeKSQLClient(), test_mode=True)
+        coordinator.producer = FakeProducer()
+        coordinator.get_assigned_gateway_uuid = lambda _: "GW1"
+        coordinator.deregister_device("DEVICE1")
+
+        self.assertEqual(len(coordinator.producer.messages), 1)
+
+        self.assertEqual(
+            coordinator.producer.messages[0]["topic"],
+            coordinator.assignment_topic
+        )
+
+        self.assertEqual(
+            coordinator.producer.messages[0]["key"],
+            "DEVICE1"
+        )
+
+        self.assertIsNone(coordinator.producer.messages[0]["value"])
+
+    @patch("connectors.common.coordinator.Asset")
+    def test_deregister_device_skips_unavailable_gateway(self, asset_cls):
+        """ Test deregistration fails if gateway is unavailable. """
+        asset = FakeAsset("GW1")
+        asset.avail.value = "UNAVAILABLE"
+        asset_cls.return_value = asset
+
+        coordinator = ExampleCoordinator(ksqlClient=FakeKSQLClient(), test_mode=True)
+        coordinator.producer = FakeProducer()
+        coordinator.get_assigned_gateway_uuid = lambda _: "GW1"
+
+        with patch.object(coordinator.logger, "warning") as warning:
+            coordinator.deregister_device("DEVICE1")
+
+        warning_messages = [
+            call.args[0]
+            for call in warning.call_args_list
+        ]
+
+        self.assertIn(
+            "Gateway 'GW1' is not AVAILABLE",
+            warning_messages
+        )
+
+        # no message was sent
+        self.assertEqual(len(coordinator.producer.messages), 0)
+
+    @patch("connectors.common.coordinator.Asset")
+    def test_deregister_device_handles_invalid_gateway_asset(self, asset_cls):
+        """ Test invalid gateway assets are handled gracefully. """
+        asset = FakeAsset("GW1")
+        asset.raise_deregister_type_error = True
+        asset_cls.return_value = asset
+
+        coordinator = ExampleCoordinator(ksqlClient=FakeKSQLClient(), test_mode=True)
+        coordinator.producer = FakeProducer()
+        coordinator.get_assigned_gateway_uuid = lambda _: "GW1"
+
+        with patch.object(coordinator.logger, "warning") as warning:
+            coordinator.deregister_device("DEVICE1")
+
+        warning_messages = [
+            call.args[0]
+            for call in warning.call_args_list
+        ]
+
+        self.assertIn(
+            "Asset 'GW1' does not appear to be a valid gateway.",
+            warning_messages
+        )
 
 
 if __name__ == "__main__":
