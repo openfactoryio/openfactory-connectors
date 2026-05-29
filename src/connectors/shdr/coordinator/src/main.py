@@ -9,10 +9,11 @@ class SHDRCoordinator(RoundRobinGatewayAssignmentMixin, BaseCoordinator):
     CONNECTOR_NAME = "SHDR"
 
 
-app = SHDRCoordinator(
-    ksqlClient=KSQLDBClient(os.getenv("KSQLDB_URL")),
-    bootstrap_servers=os.getenv("KAFKA_BROKER"),
-    loglevel=os.getenv("LOG_LEVEL", "DEBUG")
-)
+if __name__ == "__main__":
+    app = SHDRCoordinator(
+        ksqlClient=KSQLDBClient(os.getenv("KSQLDB_URL")),
+        bootstrap_servers=os.getenv("KAFKA_BROKER"),
+        loglevel=os.getenv("LOG_LEVEL", "DEBUG")
+    )
 
-app.run()
+    app.run()

@@ -187,10 +187,11 @@ class SHDRGateway(BaseGateway):
                 self.logger.info(f"Stopped SHDR monitoring task for {device.uuid}")
 
 
-app = SHDRGateway(
-    ksqlClient=KSQLDBClient(os.getenv("KSQLDB_URL")),
-    bootstrap_servers=os.getenv("KAFKA_BROKER"),
-    loglevel=os.getenv("LOG_LEVEL", "DEBUG")
-)
+if __name__ == "__main__":
+    app = SHDRGateway(
+        ksqlClient=KSQLDBClient(os.getenv("KSQLDB_URL")),
+        bootstrap_servers=os.getenv("KAFKA_BROKER"),
+        loglevel=os.getenv("LOG_LEVEL", "DEBUG")
+    )
 
-app.run()
+    app.run()
