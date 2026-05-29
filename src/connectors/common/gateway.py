@@ -52,6 +52,18 @@ class BaseGateway(OpenFactoryFastAPIApp):
             raise OFAException(f"Coordinator {self.COORDINATOR_UUID} is not deployed")
         self.register_gateway()
 
+    @property
+    def assignment_source_table(self) -> str:
+        return f"{self.CONNECTOR_NAME}_DEVICE_ASSIGNMENT_SOURCE"
+
+    @property
+    def assignment_table(self) -> str:
+        return f"{self.CONNECTOR_NAME}_DEVICE_ASSIGNMENT"
+
+    @property
+    def assignment_topic(self) -> str:
+        return f"{self.CONNECTOR_NAME.lower()}_device_assignment_topic"
+
     def connect_device(self, device: Device):
         """
         Connects a device
@@ -108,7 +120,7 @@ class BaseGateway(OpenFactoryFastAPIApp):
     def _fetch_assigned_devices(self):
         query = f"""
         SELECT DEVICE_UUID
-        FROM {self.CONNECTOR_NAME}_DEVICE_ASSIGNMENT
+        FROM {self.assignment_table}
         WHERE GATEWAY_UUID = '{self.asset_uuid}';
         """
         return self.ksql.query(query)
@@ -134,8 +146,8 @@ class BaseGateway(OpenFactoryFastAPIApp):
     def wait_for_existence_of_tables(self):
         """ Wait until all tables created by coordinator exist. """
         tables_to_check = {
-            f"{self.CONNECTOR_NAME}_DEVICE_ASSIGNMENT_SOURCE",
-            f"{self.CONNECTOR_NAME}_DEVICE_ASSIGNMENT",
+            self.assignment_source_table,
+            self.assignment_table,
         }
 
         while True:
