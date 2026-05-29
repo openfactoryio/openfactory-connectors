@@ -100,23 +100,6 @@ class BaseGateway(OpenFactoryFastAPIApp):
             self.logger.debug(f"{self.CONNECTOR_NAME} coordinator not found yet")
             time.sleep(1)
 
-    def _get_coordinator(self) -> Asset:
-        """
-        Get the coordinator asset.
-
-        Returns:
-            Asset: The coordinator asset.
-
-        Raises:
-            OFAException: If the SHDR coordinator is unavailable.
-        """
-        coordinator = Asset(asset_uuid=self.COORDINATOR_UUID, ksqlClient=self.ksql)
-        ret = coordinator.wait_until(attribute_id='avail', value="AVAILABLE", timeout=120)
-        if not ret:
-            self.logger.error(f"Coordinator {self.COORDINATOR_UUID} is not deployed")
-            raise
-        return coordinator
-
     def _fetch_assigned_devices(self):
         query = f"""
         SELECT DEVICE_UUID
