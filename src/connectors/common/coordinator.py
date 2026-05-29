@@ -37,7 +37,8 @@ class BaseCoordinator(OpenFactoryFastAPIApp):
         self.api.state.ofa_app = self
 
         # redefine the Asset type
-        self.wait_until(attribute_id='AssetType', value='OpenFactoryApp')
+        if not getattr(self, "_test_mode", False):
+            self.wait_until(attribute_id='AssetType', value='OpenFactoryApp')
         self.AssetType = f'{self.CONNECTOR_NAME}.Coordinator'
 
         self.create_device_assignment_tables()
