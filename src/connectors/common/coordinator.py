@@ -43,17 +43,29 @@ class BaseCoordinator(OpenFactoryFastAPIApp):
         self.create_device_assignment_tables()
         self.discover_gateways()
 
+    @property
+    def assignment_source_table(self) -> str:
+        return f"{self.CONNECTOR_NAME}_DEVICE_ASSIGNMENT_SOURCE"
+
+    @property
+    def assignment_table(self) -> str:
+        return f"{self.CONNECTOR_NAME}_DEVICE_ASSIGNMENT"
+
+    @property
+    def assignment_topic(self) -> str:
+        return f"{self.CONNECTOR_NAME.lower()}_device_assignment_topic"
+
     def create_device_assignment_tables(self):
         """ Ensure that the KSQLDB tables for device assignment exists. """
         self.logger.info(f"Creating {self.CONNECTOR_NAME} assignment tables if they do not exist.")
 
         # Source tables
         self.ksql.statement_query(f"""
-        CREATE TABLE IF NOT EXISTS {self.CONNECTOR_NAME}_DEVICE_ASSIGNMENT_SOURCE (
+        CREATE TABLE IF NOT EXISTS {self.assignment_source_table} (
             DEVICE_UUID STRING PRIMARY KEY,
             GATEWAY_UUID STRING
         ) WITH (
-            KAFKA_TOPIC='{self.CONNECTOR_NAME.lower()}_device_assignment_topic',
+            KAFKA_TOPIC='{self.assignment_topic}',
             VALUE_FORMAT='JSON',
             PARTITIONS=1
         );
@@ -61,9 +73,9 @@ class BaseCoordinator(OpenFactoryFastAPIApp):
 
         # Materialized tables
         self.ksql.statement_query(f"""
-        CREATE TABLE IF NOT EXISTS {self.CONNECTOR_NAME}_DEVICE_ASSIGNMENT AS
+        CREATE TABLE IF NOT EXISTS {self.assignment_table} AS
             SELECT DEVICE_UUID, GATEWAY_UUID
-            FROM {self.CONNECTOR_NAME}_DEVICE_ASSIGNMENT_SOURCE
+            FROM {self.assignment_source_table}
             EMIT CHANGES;
         """)
 
@@ -94,7 +106,7 @@ class BaseCoordinator(OpenFactoryFastAPIApp):
             str: Gateway UUID to which a device is assigned or None if not assigned to any.
         """
         rows = self.ksql.query(
-            f"SELECT GATEWAY_UUID FROM {self.CONNECTOR_NAME}_DEVICE_ASSIGNMENT WHERE DEVICE_UUID='{device_uuid}';"
+            f"SELECT GATEWAY_UUID FROM {self.assignment_table} WHERE DEVICE_UUID='{device_uuid}';"
             )
         if not rows:
             return None
@@ -120,7 +132,7 @@ class BaseCoordinator(OpenFactoryFastAPIApp):
         else:
             try:
                 gateway.register_device(sender_uuid=self.asset_uuid, device_config=device_config)
-                self.ksql.insert_into_stream(f"{self.CONNECTOR_NAME}_DEVICE_ASSIGNMENT_SOURCE",
+                self.ksql.insert_into_stream(self.assignment_source_table,
                                              [{"DEVICE_UUID": device.uuid, "GATEWAY_UUID": gateway.asset_uuid}])
             except TypeError:
                 self.logger.warning(f"Asset '{gateway.asset_uuid}' does not appear to be a valid gateway.")
@@ -148,7 +160,7 @@ class BaseCoordinator(OpenFactoryFastAPIApp):
         try:
             gateway.deregister_device(sender_uuid=self.asset_uuid, device_uuid=device_uuid)
             self.producer.produce(
-                topic=f"{self.CONNECTOR_NAME.lower()}_device_assignment_topic",
+                topic=self.assignment_topic,
                 key=device_uuid,
                 value=None)
         except TypeError:
