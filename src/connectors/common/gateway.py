@@ -63,16 +63,16 @@ class BaseGateway(OpenFactoryFastAPIApp):
         """
         raise NotImplementedError(f"{self.__class__.__name__} must implement connect_device()")
 
-    def deconnect_device(self, device_uuid: str):
+    def disconnect_device(self, device_uuid: str):
         """
-        Deconnects a device
+        Disconnect a device.
 
-        Children must override this class
+        Children must override this method.
 
         Args:
-            device (Device): The device to deconnect.
+            device_uuid (str): The UUID of the device to disconnect.
         """
-        raise NotImplementedError(f"{self.__class__.__name__} must implement deconnect_device()")
+        raise NotImplementedError(f"{self.__class__.__name__} must implement disconnect_device()")
 
     def _discover_coordinator(self) -> None:
         """ Discover connector coordinator """
@@ -125,14 +125,14 @@ class BaseGateway(OpenFactoryFastAPIApp):
         return self.ksql.query(query)
 
     def register_gateway(self):
-        """ Register the Gateway with the coordiantor. """
+        """ Register the Gateway with the coordinator. """
         try:
             self.coordinator.register_gateway(sender_uuid=self.asset_uuid, gateway_uuid=self.asset_uuid)
         except TypeError:
             raise OFAException(f"Asset '{self.COORDINATOR_UUID}' does not appear to be a valid coordinator.")
 
-    def wait_for_existience_of_tables(self):
-        """ Wait until all tables ceated by coordiantor exist. """
+    def wait_for_existence_of_tables(self):
+        """ Wait until all tables created by coordinator exist. """
         tables_to_check = {
             f"{self.CONNECTOR_NAME}_DEVICE_ASSIGNMENT_SOURCE",
             f"{self.CONNECTOR_NAME}_DEVICE_ASSIGNMENT",
@@ -214,13 +214,13 @@ class BaseGateway(OpenFactoryFastAPIApp):
         device_uuid: Annotated[str, "Device UUID"],
     ):
         self.logger.info(f"Deregistering device {device_uuid}")
-        self.deconnect_device(device_uuid)
+        self.disconnect_device(device_uuid)
 
     async def async_main_loop(self):
         """ asynchronous main loop """
 
         # wait for all ksqlDB tables created by coordinator to be ready
-        self.wait_for_existience_of_tables()
+        self.wait_for_existence_of_tables()
 
         # rebuild state
         self.rebuild_gateway_state()

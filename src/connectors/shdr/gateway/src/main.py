@@ -44,14 +44,14 @@ class SHDRGateway(BaseGateway):
         task = asyncio.create_task(self._device_loop(device))
         self.device_tasks[device.uuid] = task
 
-    def deconnect_device(self, device_uuid: str):
+    def disconnect_device(self, device_uuid: str):
         """
-        Deconnects a device
+        Disconnect a device
 
         Args:
-            device (Device): The device to deconnect.
+            device_uuid (str): The UUID of the device to disconnect.
         """
-        self.logger.info(f"Deconnecting device {device_uuid}")
+        self.logger.info(f"Disconnecting device {device_uuid}")
 
         task = self.device_tasks.pop(device_uuid, None)
         if task is None:
