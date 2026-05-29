@@ -61,7 +61,7 @@ class BaseGateway(OpenFactoryFastAPIApp):
         Args:
             device (Device): The device to connect to.
         """
-        pass
+        raise NotImplementedError(f"{self.__class__.__name__} must implement connect_device()")
 
     def deconnect_device(self, device_uuid: str):
         """
@@ -72,7 +72,7 @@ class BaseGateway(OpenFactoryFastAPIApp):
         Args:
             device (Device): The device to deconnect.
         """
-        pass
+        raise NotImplementedError(f"{self.__class__.__name__} must implement deconnect_device()")
 
     def _discover_coordinator(self) -> None:
         """ Discover connector coordinator """
