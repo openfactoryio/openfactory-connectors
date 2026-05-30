@@ -327,5 +327,6 @@ class SHDRGatewayDeviceLoopTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(open_connection.call_count, 2)
 
+
 if __name__ == "__main__":
     unittest.main()

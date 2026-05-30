@@ -16,5 +16,6 @@ class SHDRGatewayConfigurationTests(unittest.TestCase):
         """ Test SHDRGateway connector name. """
         self.assertEqual(SHDRGateway.CONNECTOR_NAME, "SHDR")
 
+
 if __name__ == "__main__":
     unittest.main()
