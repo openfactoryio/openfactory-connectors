@@ -81,7 +81,7 @@ class SHDRGateway(BaseGateway):
                 }
             }
         """
-        parts = line.strip().split("|")
+        parts = [p.strip() for p in line.strip().split("|")]
         if len(parts) < 3:
             raise ValueError("Invalid SHDR line")
 
