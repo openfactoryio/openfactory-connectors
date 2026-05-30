@@ -194,7 +194,7 @@ if __name__ == "__main__":
     app = SHDRGateway(
         ksqlClient=KSQLDBClient(os.getenv("KSQLDB_URL")),
         bootstrap_servers=os.getenv("KAFKA_BROKER"),
-        loglevel=os.getenv("LOG_LEVEL", "DEBUG")
+        loglevel=os.getenv("LOG_LEVEL", "INFO")
     )
 
     app.run()
