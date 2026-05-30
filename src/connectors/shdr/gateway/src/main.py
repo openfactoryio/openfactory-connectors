@@ -92,7 +92,10 @@ class SHDRGateway(BaseGateway):
 
         values = {}
         for i in range(0, len(kv), 2):
-            values[kv[i]] = kv[i + 1]
+            key = kv[i]
+            if not key:
+                raise ValueError("SHDR keys cannot be empty")
+            values[key] = kv[i + 1]
 
         return {
             "timestamp": timestamp,

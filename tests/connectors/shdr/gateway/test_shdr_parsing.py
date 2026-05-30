@@ -56,6 +56,11 @@ class SHDRGatewayParserTests(unittest.TestCase):
             }
         )
 
+    def test_parse_shdr_line_rejects_empty_keys(self):
+        """ Test that SHDR datapoints require a non-empty key. """
+        with self.assertRaises(ValueError):
+            self.gateway.parse_shdr_line("2026-05-28T00:10:00Z||42.1")
+
 
 if __name__ == "__main__":
     unittest.main()
