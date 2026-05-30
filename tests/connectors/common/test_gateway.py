@@ -65,6 +65,12 @@ def asset_factory(asset_uuid, ksqlClient=None):
     return FakeDeviceAsset(asset_uuid, ksqlClient)
 
 
+class UnavailableCoordinatorAsset(FakeCoordinatorAsset):
+
+    def wait_until(self, *args, **kwargs):
+        return False
+
+
 class ExampleGateway(BaseGateway):
     """ Concrete gateway used to exercise BaseGateway behavior. """
 
@@ -416,6 +422,12 @@ class BaseGatewayTests(unittest.TestCase):
         self.assertTrue(asset.closed)
         self.assertEqual(len(gateway.connected_devices), 1)
         self.assertEqual(gateway.connected_devices[0].uuid, "DEVICE1")
+
+    @patch("connectors.common.gateway.Asset", UnavailableCoordinatorAsset)
+    def test_initialization_requires_available_coordinator(self):
+        """ Test initialization fails when coordinator is unavailable. """
+        with self.assertRaises(OFAException):
+            ExampleGateway(ksqlClient=FakeKSQLClient(), test_mode=True)
 
 
 if __name__ == "__main__":
