@@ -66,7 +66,7 @@ apps:
 
   shdr-coordinator:
     uuid: SHDR-COORDINATOR
-    image: shdr-coordinator
+    image: ghcr.io/openfactoryio/shdr-coordinator:<VERSION>
     environment:
       - LOG_LEVEL=DEBUG
     networks:
@@ -74,7 +74,7 @@ apps:
 
   shdr-gateway-1:
     uuid: SHDR-GATEWAY-1
-    image: shdr-gateway
+    image: ghcr.io/openfactoryio/shdr-gateway:<VERSION>
     environment:
       - LOG_LEVEL=DEBUG
       - KAFKA_LINGER_MS=10
@@ -83,7 +83,7 @@ apps:
 
   shdr-gateway-2:
     uuid: SHDR-GATEWAY-2
-    image: shdr-gateway
+    image: ghcr.io/openfactoryio/shdr-gateway:<VERSION>
     environment:
       - LOG_LEVEL=DEBUG
       - KAFKA_LINGER_MS=10
