@@ -11,7 +11,8 @@
 #   - Compatible with both local and Swarm deployments
 #
 # build:
-#   docker build -f src/connectors/shdr/gateway/Dockerfile -t shdr-gateway .
+#   cd src
+#   docker build -f connectors/shdr/gateway/Dockerfile -t shdr-gateway .
 # ------------------------------------------------------------------------------
 
 # ---- builder stage ----
@@ -60,8 +61,8 @@ ENV PATH="/opt/venv/bin:$PATH"
 WORKDIR /app
 RUN mkdir -p connectors/common
 RUN mkdir -p connectors/shdr/gateway
-COPY src/connectors/common connectors/common
-COPY src/connectors/shdr/gateway connectors/shdr/gateway
+COPY connectors/common connectors/common
+COPY connectors/shdr/gateway connectors/shdr/gateway
 
 # Change ownership to the non-root user
 RUN chown -R $UNAME:$UNAME /app
