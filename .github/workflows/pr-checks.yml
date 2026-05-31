@@ -9,3 +9,7 @@ jobs:
   lint:
     name: Run Linter
     uses: ./.github/workflows/lint.yml
+
+  unit-tests:
+    name: Run Unit Tests
+    uses: ./.github/workflows/unittests.yml
