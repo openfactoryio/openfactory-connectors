@@ -11,7 +11,8 @@
 #   - Compatible with both local and Swarm deployments
 #
 # build:
-#   docker build -f src/connectors/shdr/coordinator/Dockerfile -t shdr-coordinator .
+#   cd src
+#   docker build -f connectors/shdr/coordinator/Dockerfile -t shdr-coordinator .
 # ------------------------------------------------------------------------------
 
 # ---- builder stage ----
@@ -60,8 +61,8 @@ ENV PATH="/opt/venv/bin:$PATH"
 WORKDIR /app
 RUN mkdir -p connectors/common
 RUN mkdir -p connectors/shdr/coordinator
-COPY src/connectors/common connectors/common
-COPY src/connectors/shdr/coordinator connectors/shdr/coordinator
+COPY connectors/common connectors/common
+COPY connectors/shdr/coordinator connectors/shdr/coordinator
 
 # Change ownership to the non-root user
 RUN chown -R $UNAME:$UNAME /app
