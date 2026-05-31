@@ -47,7 +47,7 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v7
         with:
-          context: ./src/connectors/shdr/coordinator
+          context: ./src
           file: ./src/connectors/shdr/coordinator/Dockerfile
           push: true
           tags: |
