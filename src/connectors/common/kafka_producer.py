@@ -88,3 +88,4 @@ class GlobalAssetProducer(Producer):
                     },
             }
         self.produce(topic=self.topic, key=asset_uuid, value=json.dumps(msg))
+        self.poll(0)
