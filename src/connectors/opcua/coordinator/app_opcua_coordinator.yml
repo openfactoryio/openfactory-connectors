@@ -1,0 +1,26 @@
+# ---------------------------------------------------------------------------------------
+# 🏭 OpenFactory App configuration file for the OPCUA Coordinator
+#
+# Deploy with:
+#   ofa device up app_opcua_coordinator.yml
+# ---------------------------------------------------------------------------------------
+# Environment variables:
+#
+# Optional:
+#   OPCUA_COORDINATOR_LOG_LEVEL    Log level (default: INFO)
+#
+# ---------------------------------------------------------------------------------------
+
+apps:
+
+  opcua-coordinator:
+    uuid: OPCUA-COORDINATOR
+    image: opcua-coordinator
+    environment:
+      - LOG_LEVEL=${OPCUA_COORDINATOR_LOG_LEVEL:-DEBUG}
+    routing:
+      expose: true
+      port: 4000
+      hostname: opcua-coordinator
+    networks:
+      - factory-net

@@ -1,0 +1,495 @@
+"""
+Device monitoring module for the OPC UA Gateway.
+
+This module defines the `DeviceMonitor` class, which manages the lifecycle
+of OPC UA devices. Each device monitor handles:
+
+- Parsing the OPC UA connector schema.
+- Establishing and maintaining OPC UA client sessions.
+- Discovering OPC UA methods and exposing them as OpenFactory commands.
+- Reading configured constants.
+- Subscribing to variables and events.
+- Forwarding asset attributes to Kafka via `GlobalAssetProducer`.
+- Automatic reconnection on errors.
+- Cleanup when monitoring tasks are cancelled.
+"""
+
+from __future__ import annotations
+import asyncio
+import traceback
+import re
+import unicodedata
+import json
+from typing import Any, TYPE_CHECKING
+from numbers import Number
+from asyncua import Client, Node, ua
+from asyncua.common.ua_utils import string_to_val
+from openfactory.schemas.devices import Device
+from openfactory.schemas.connectors.opcua import OPCUAConnectorSchema
+from openfactory.schemas.command_header import CommandEnvelope
+from openfactory.assets import Asset, AssetAttribute
+from openfactory.assets.utils import openfactory_timestamp
+from .subscription import SubscriptionHandler
+from .utils import get_node_by_path, normalize_value
+
+if TYPE_CHECKING:
+    from .main import OPCUAGateway
+
+
+class DeviceMonitor:
+    """
+    Manage the lifecycle of an OPC UA monitored device.
+
+    Each device gets its own monitor instance, which handles:
+    - Parsing connector schema
+    - Establishing OPC UA sessions
+    - Discovering OPC UA methods and exposing OpenFactory commands
+    - Reading configured constants
+    - Subscribing to variables and events
+    - Updating asset attributes in Kafka/ksqlDB
+    - Handling reconnects and cleanup
+    """
+
+    def __init__(self, device: Device, app: OPCUAGateway):
+        """
+        Initialize monitoring of a given device.
+
+        Args:
+            device (Device): The device definition, including UUID and connector schema.
+            app (OPCUAGateway): The OPCUAGateway application instance used to access shared state
+        """
+        self.device = device
+        self.app = app
+        self.dev_uuid = device.uuid
+        self.asset = Asset(device.uuid, ksqlClient=app.ksql)
+        self.global_producer = app.global_producer
+        self.schema = OPCUAConnectorSchema(**device.connector.model_dump())
+        self.subscription = None
+        self._connection_error = False
+        self.methods = {}
+        self.log = app.logger
+
+    async def run(self) -> None:
+        """
+        Main entry point for monitoring loop.
+
+        Keeps trying to connect and monitor the device until cancelled.
+        Reconnects automatically on errors with a small backoff.
+        """
+        self.log.info(f"Starting monitor task for {self.dev_uuid}")
+        while True:
+            try:
+                await self._run_session()
+                self._connection_error = False
+            except asyncio.CancelledError:
+                await self._cleanup()
+                raise
+            except Exception as e:
+                if "BadNoMatch" in str(e):
+                    self.log.error(f"[{self.dev_uuid}] Device cannot be resolved with {self.schema.server.uri}: {e}")
+                    await self._cleanup()
+                    break
+                if not self._connection_error:
+                    self.log.error(f"[{self.dev_uuid}] OPC UA client error: {type(e).__name__}: {e}")
+                    self.log.debug(traceback.format_exc())
+                    self.log.error(f"[{self.dev_uuid}] Will attempt to connect again as soon as device is back online ...")
+                    self._connection_error = True
+                try:
+                    self.global_producer.send(
+                        asset_uuid=self.dev_uuid,
+                        asset_attribute=AssetAttribute(id='avail', value="UNAVAILABLE", tag="Availability", type="Events")
+                    )
+                except Exception:
+                    pass
+                await asyncio.sleep(2)  # backoff before reconnect
+
+    async def _run_session(self) -> None:
+        """
+        Establish a session, discover configured resources,
+        and subscribe to variables and events.
+
+        Runs until the connection is lost. A reconnect is triggered
+        by exceptions from the keepalive loop.
+        """
+        async with Client(self.schema.server.uri) as client:
+            self.log.info(f"Connecting to OPC UA server {self.schema.server.uri}")
+            handler = SubscriptionHandler(self.dev_uuid, self.app, client)
+            self.subscription = await client.create_subscription(
+                period=float(self.schema.server.subscription.publishing_interval),
+                handler=handler,
+            )
+
+            await self._discover_methods(client)
+            await self._read_constants(client)
+            await self._subscribe_variables(client, handler)
+            await self._subscribe_events(client)
+
+            self.global_producer.send(
+                asset_uuid=self.dev_uuid,
+                asset_attribute=AssetAttribute(id='avail', value="AVAILABLE", tag="Availability", type="Events")
+            )
+            self.log.info(f"[{self.dev_uuid}] Connected to OPC UA server at {self.schema.server.uri}")
+
+            await self._keepalive_loop(client)
+
+    async def call_opcua_method(self, cmd: str, envelope: CommandEnvelope) -> Any | None:
+        """
+        Call an OPC UA method with its arguments.
+
+        Args:
+            cmd (str): Command name
+            envelope (CommandEnvelope): Command envelope containing header and named arguments
+
+        Returns:
+            Any | None: Result from the OPC UA method call, or None if the call fails.
+        """
+        # Get method metadata from cache
+        parent_node = self.methods[cmd]["parent_object"]
+        method_node = self.methods[cmd]["method_node"]
+        input_vtypes = self.methods[cmd]["input_vtypes"]
+        name_to_index = self.methods[cmd]["name_to_index"]
+
+        # Extract arguments dict from envelope
+        args_dict = envelope.arguments or {}
+
+        # Prepare positional argument list for OPC UA
+        ua_args: list[ua.Variant] = [None] * len(input_vtypes)
+
+        for name, val_str in args_dict.items():
+            if name not in name_to_index:
+                self.log.warning(f"[{self.dev_uuid}] Unknown argument '{name}' for command '{cmd}'")
+                continue
+            idx = name_to_index[name]
+            vtype = input_vtypes[idx]
+            ua_args[idx] = ua.Variant(string_to_val(val_str, vtype), vtype)
+
+        # Fill any missing arguments with empty strings
+        for i, arg in enumerate(ua_args):
+            if arg is None:
+                ua_args[i] = ua.Variant("", input_vtypes[i])
+
+        try:
+            self.log.debug(f"[{self.dev_uuid}] Calling OPC UA method '{cmd}' with arguments {ua_args}")
+            result = await parent_node.call_method(method_node, *ua_args)
+            self.log.debug(f"[{self.dev_uuid}] Method '{cmd}' result: {result}")
+            return result
+
+        except Exception as e:
+            self.log.error(f"[{self.dev_uuid}] Method call failed for '{cmd}': {e}")
+
+    def _normalize_cmd(self, name: str) -> str:
+        """
+        Normalize a command name into a safe, ASCII-only identifier.
+
+        This function transforms the input string by:
+          1. Converting Unicode characters to closest ASCII equivalents (e.g., 'ä' → 'a').
+          2. Replacing any non-alphanumeric characters with underscores.
+          3. Collapsing multiple consecutive underscores into a single underscore.
+          4. Stripping leading and trailing underscores.
+
+        Args:
+            name (str): The original command name to normalize.
+
+        Returns:
+            str: A normalized, ASCII-only string suitable for use as a safe internal identifier.
+
+        Examples:
+            >>> self._normalize_cmd("Generate Code")
+            'Generate_Code'
+            >>> self._normalize_cmd("Öl Pumpe Start!")
+            'Ol_Pumpe_Start'
+            >>> self._normalize_cmd("Temp °C")
+            'Temp_C'
+        """
+        # Normalize unicode (ä → a, etc.)
+        name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+
+        # Replace non-alphanumeric with underscore
+        name = re.sub(r"[^a-zA-Z0-9_]", "_", name)
+
+        # Collapse multiple underscores
+        name = re.sub(r"_+", "_", name)
+
+        return name.strip("_")
+
+    async def _discover_methods(self, client: Client) -> None:
+        """
+        Discover OPC UA methods, expose them as OpenFactory Asset attributes,
+        and subscribe to corresponding OpenFactory commands.
+
+        Args:
+            client (Client): Connected OPC UA client
+        """
+        if not self.schema.methods:
+            return
+
+        for local_name, method_cfg in self.schema.methods.items():
+
+            self.log.debug(f"[{self.dev_uuid}] Add Methods for {local_name}")
+            if method_cfg.browse_path is not None:
+                methods_node = await get_node_by_path(client, method_cfg.browse_path)
+            else:
+                methods_node = await get_node_by_path(client, method_cfg.node_id)
+
+            for method_node in await methods_node.get_methods():
+                method = await method_node.read_browse_name()
+                command = self._normalize_cmd(method.Name)
+                description = await method_node.read_description()
+                self.log.info(f"[{self.dev_uuid}] Add Method: {command} ({description.Text})")
+
+                # Build structured method contract that will be added to OpenFactory Asset
+                method_contract = {
+                    "description": description.Text if description else "",
+                    "arguments": []
+                }
+
+                vtypes = []
+                name_to_index = {}
+                try:
+                    # Get the InputArguments property
+                    input_args_node = await method_node.get_child("0:InputArguments")
+                    input_args_values = await input_args_node.read_value()
+
+                    # Discover variant type of input arguments
+                    for pos, spec in enumerate(input_args_values):
+                        vtype = ua.VariantType(spec.DataType.Identifier)
+                        vtypes.append(vtype)
+                        name_to_index[spec.Name] = pos
+
+                        # Log structured information
+                        desc = spec.Description.Text if spec.Description else "No description"
+                        self.log.info(
+                            f"[{self.dev_uuid}] [{command}] Input argument: "
+                            f"Name='{spec.Name}' "
+                            f"Type={vtype.name} "
+                            f"Description='{desc}'"
+                        )
+
+                        method_contract["arguments"].append({
+                            "name": spec.Name,
+                            "description": desc
+                        })
+
+                except ua.UaStatusCodeError as e:
+                    if e.code == ua.StatusCodes.BadNoMatch:
+                        # No InputArguments found; ua_args remains an empty list
+                        input_args_values = []
+                    else:
+                        raise
+
+                # store reference to OPC UA method (map between OpenFactory command and OPC UA method)
+                self.methods[command] = {
+                    "parent_object": methods_node,
+                    "method_node": method_node,
+                    "input_vtypes": vtypes,
+                    "name_to_index": name_to_index,
+                }
+
+                # add method to Asset
+                self.asset.add_attribute(
+                    asset_attribute=AssetAttribute(
+                        id=command,
+                        value=json.dumps(method_contract),
+                        type='Method',
+                        tag='Method'
+                    )
+                )
+
+                # add OpenFactory command to Asset
+                self.asset.add_attribute(
+                    asset_attribute=AssetAttribute(
+                        id=f"{command}_CMD",
+                        value="",
+                        type='OpenFactory',
+                        tag='Method.Command'
+                    )
+                )
+
+                # subscribe to OpenFactory command directed to the Asset
+                def on_cmd(msg_key, msg_value, cmd=command):
+                    try:
+                        # Parse JSON string into CommandEnvelope
+                        envelope = CommandEnvelope.parse_raw(msg_value['VALUE'])
+                    except Exception as e:
+                        self.log.error(f"[{self.dev_uuid}] Failed to parse CommandEnvelope for '{cmd}': {e}")
+                        return
+
+                    # Schedule the OPC UA method call with typed envelope
+                    asyncio.create_task(self.call_opcua_method(cmd=cmd, envelope=envelope))
+
+                self.asset.subscribe_to_attribute(f'{command}_CMD', on_cmd)
+
+    async def _read_constants(self, client: Client) -> None:
+        """
+        Read all configured constants and populate the OpenFactory Asset.
+
+        Args:
+            client (Client): Connected OPC UA client
+        """
+        if not self.schema.constants:
+            return
+        for local_name, const_cfg in self.schema.constants.items():
+            try:
+                if const_cfg.browse_path is not None:
+                    const_node = await get_node_by_path(client, const_cfg.browse_path)
+                else:
+                    const_node = client.get_node(const_cfg.node_id)
+
+                dv = await const_node.read_data_value()
+                attr = AssetAttribute(
+                    id=local_name,
+                    value=normalize_value(dv.Value.Value),
+                    type="Samples" if isinstance(dv.Value.Value, Number) else "Events",
+                    tag=const_cfg.tag,
+                    timestamp=openfactory_timestamp(dv.SourceTimestamp)
+                    )
+                self.asset.add_attribute(asset_attribute=attr)
+                self.log.info(f"[{self.dev_uuid}] Acquired constant '{local_name}' ({const_node.nodeid.to_string()}): {dv.Value.Value}")
+            except ValueError as e:
+                self.log.error(f"[{self.dev_uuid}] Failed to read '{local_name}' ({const_node.nodeid.to_string()}):{e}")
+            except Exception as e:
+                self.log.error(
+                    f"[{self.dev_uuid}] Failed to to read '{local_name}' ({const_node.nodeid.to_string()}): {e}",
+                    exc_info=True
+                    )
+
+    async def _subscribe_variables(self, client: Client, handler: SubscriptionHandler) -> None:
+        """
+        Subscribe to all configured variables and configure write-back
+        for writable variables.
+
+        Args:
+            client (Client): Connected OPC UA client
+            handler (SubscriptionHandler): Handles variable updates.
+        """
+        if not self.schema.variables:
+            return
+        for local_name, var_cfg in self.schema.variables.items():
+            try:
+                if var_cfg.browse_path is not None:
+                    var_node = await get_node_by_path(client, var_cfg.browse_path)
+                else:
+                    var_node = client.get_node(var_cfg.node_id)
+                await self.subscription.subscribe_data_change(
+                    var_node,
+                    queuesize=var_cfg.queue_size,
+                    sampling_interval=var_cfg.sampling_interval,
+                )
+                handler.node_map[var_node] = {
+                    "local_name": local_name,
+                    "tag": var_cfg.tag,
+                    "deadband": var_cfg.deadband,
+                    "last_val": None
+                    }
+                self.log.info(f"[{self.dev_uuid}] Subscribed to variable '{local_name}' ({var_node.nodeid.to_string()})")
+
+                # Discover server-side access level
+                user_access_level = await var_node.get_user_access_level()
+                is_writable = ua.AccessLevel.CurrentWrite in user_access_level
+
+                # Policy (schema) vs capability (server)
+                if var_cfg.access_level == "rw":
+                    if is_writable:
+                        loop = asyncio.get_running_loop()
+
+                        async def _write_value(value: str, node: Node, name: str) -> None:
+                            """ Write value to OPC UA server. """
+                            try:
+                                v_type = await node.read_data_type_as_variant_type()
+                                await node.write_value(value, varianttype=v_type)
+                            except Exception as e:
+                                self.log.error(
+                                    f"[{self.dev_uuid}] Failed to write variable '{name}' ({node.nodeid.to_string()}): {e}",
+                                    exc_info=True,
+                                )
+
+                        def on_variable_update(msg_subject: str, msg_value: dict, node: Node = var_node, name: str = local_name) -> None:
+                            """ Callback for attribute changes, capturing loop variables. """
+                            async def _check_and_write(value: str):
+                                """ Avoid infinity loops. """
+                                current_val = await node.read_value()
+                                if value != current_val:
+                                    self.log.debug(f"[{self.dev_uuid}] Updating variable '{name}' ({node.nodeid.to_string()}) with '{value}'")
+                                    await _write_value(value, node=node, name=name)
+
+                            loop.create_task(_check_and_write(msg_value['VALUE']))
+
+                        # Schedule write-back to OPC UA server if OpenFactory detects a change
+                        self.asset.subscribe_to_attribute(local_name, on_variable_update)
+                        self.log.info(
+                            f"[{self.dev_uuid}] Allow OpenFactory to write to "
+                            f"variable '{local_name}' ({var_node.nodeid.to_string()})"
+                            )
+                    else:
+                        self.log.warning(
+                            f"[{self.dev_uuid}] Variable '{local_name}' ({var_node.nodeid.to_string()}) "
+                            f"declared as rw but server reports it as read-only"
+                        )
+
+            except ValueError as e:
+                self.log.error(f"[{self.dev_uuid}] Failed to subscribe to variable '{local_name}' ({var_node.nodeid.to_string()}):{e}")
+            except Exception as e:
+                self.log.error(
+                    f"[{self.dev_uuid}] Failed to subscribe to variable '{local_name}' ({var_node.nodeid.to_string()}): {e}",
+                    exc_info=True
+                    )
+
+    async def _subscribe_events(self, client: Client, ) -> None:
+        """
+        Subscribe to events.
+
+        Args:
+            client (Client): Connected OPC UA client
+        """
+        if not self.schema.events:
+            return
+        for local_name, event_cfg in self.schema.events.items():
+            try:
+                if event_cfg.browse_path is not None:
+                    event_node = await get_node_by_path(client, event_cfg.browse_path)
+                    node_id = event_node.nodeid.to_string()
+                else:
+                    node_id = event_cfg.node_id
+                await self.subscription.subscribe_events(node_id)
+                self.log.info(f"[{self.dev_uuid}] Subscribed to events '{local_name}' ({node_id})")
+            except Exception as e:
+                self.log.error(f"[{self.dev_uuid}] Failed to subscribe to events '{local_name}': {e}", exc_info=True)
+
+    async def _keepalive_loop(self, client: Client) -> None:
+        """
+        Keep the session alive by reading the server's Objects folder periodically.
+
+        Args:
+            client (Client): Connected OPC UA client.
+
+        Raises:
+            Exception: If the server becomes unreachable.
+        """
+        poll_node = client.nodes.objects
+        self.log.info(f"[{self.dev_uuid}] Keepalive by polling server Objects folder")
+
+        while True:
+            await asyncio.sleep(1)
+            await poll_node.read_display_name()  # exception triggers reconnect
+
+    async def _cleanup(self) -> None:
+        """
+        Cleanup resources when monitor task is cancelled.
+
+        Ensures asset availability is set to UNAVAILABLE and deletes the subscription.
+        """
+        self.log.info(f"[{self.dev_uuid}] Monitor task cancelled; cleaning up")
+        try:
+            self.global_producer.send(
+                asset_uuid=self.dev_uuid,
+                asset_attribute=AssetAttribute(id='avail', value="UNAVAILABLE", tag="Availability", type="Events")
+            )
+            self.log.info(f"[{self.dev_uuid}] Sent UNAVAILABLE status to OpenFactory")
+        except Exception as e:
+            self.log.error(f"[{self.dev_uuid}] Unable to send UNAVAILABLE status to OpenFactory: {e}")
+        try:
+            if self.subscription:
+                await self.subscription.delete()
+        except Exception:
+            pass
+        self.log.info(f"[{self.dev_uuid}] OPC UA connector removed successfully")
