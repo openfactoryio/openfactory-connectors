@@ -1,5 +1,7 @@
 # OPC UA Connector for OpenFactory
 
+**⚠️ OBSOLETE CODE - WILL BE REMOVE IN FUTURE RELEASES ⚠️**
+
 The **OPC UA Connector** enables seamless integration between industrial equipment that speaks the **OPC UA protocol** and the **OpenFactory platform**.
 
 It acts as a bridge between **shop-floor devices** and the **cloud-native data infrastructure**:
