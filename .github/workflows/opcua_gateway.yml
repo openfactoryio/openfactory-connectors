@@ -47,8 +47,8 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v7
         with:
-          context: ./opcua/gateway
-          file: ./opcua/gateway/Dockerfile
+          context: ./src
+          file: ./src/connectors/opcua/gateway/Dockerfile
           push: true
           tags: |
             ${{ env.TAGS }}
