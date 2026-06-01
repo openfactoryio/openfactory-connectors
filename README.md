@@ -11,7 +11,7 @@ Each connector is responsible for collecting data from a specific protocol or ec
 
 ## 🔗 Supported Connectors
 
-- **[OPC UA](opcua)**  
+- **[OPC UA](src/connectors/opcua)**  
   - `OPCUA-Coordinator`: assigns devices to gateways.  
   - `OPCUA-Gateway`: connects to one or more OPC UA servers, collects data, and streams to Kafka.
 
@@ -27,12 +27,11 @@ Each connector is responsible for collecting data from a specific protocol or ec
 ## 📂 Repository Structure
 
 ```
-openfactory-connectors/
+openfactory-connectors/src/connectors
 ├── opcua/          # OPC UA connectors (Coordinator + Gateway)
-├── shdr/           # SHDR connector (planned)
+├── shdr/           # SHDR connector
 ├── mqtt/           # MQTT connector (planned)
-├── modbus/         # Modbus connector (planned)
-└── README.md       # General repository documentation
+└── modbus/         # Modbus connector (planned)
 ```
 
 ## 🚀 Usage

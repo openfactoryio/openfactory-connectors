@@ -1,0 +1,2 @@
+# requirements for OPC UA Gateway
+asyncua
