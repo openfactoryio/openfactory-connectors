@@ -61,6 +61,16 @@ class SHDRGatewayParserTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.gateway.parse_shdr_line("2026-05-28T00:10:00Z||42.1")
 
+    def test_parse_shdr_command(self):
+        """ Test parsing SHDR commands. """
+        parsed = self.gateway.parse_shdr_line("* PING")
+        self.assertEqual(parsed, {"command": "PING"})
+
+    def test_parse_shdr_command_strips_whitespace(self):
+        """ Test parsing SHDR commands ignores surrounding whitespace. """
+        parsed = self.gateway.parse_shdr_line("  *   PING   ")
+        self.assertEqual(parsed, {"command": "PING"})
+
 
 if __name__ == "__main__":
     unittest.main()

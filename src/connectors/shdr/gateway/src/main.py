@@ -81,6 +81,10 @@ class SHDRGateway(BaseGateway):
                 }
             }
         """
+        line = line.strip()
+        if line.startswith("*"):
+            return {"command": line[1:].strip()}
+
         parts = [p.strip() for p in line.strip().split("|")]
         if len(parts) < 3:
             raise ValueError("Invalid SHDR line")
@@ -135,6 +139,9 @@ class SHDRGateway(BaseGateway):
 
                     line = line.decode().strip()
                     parsed = self.parse_shdr_line(line)
+                    if "command" in parsed:
+                        self.logger.debug(f"Received SHDR command '{parsed['command']}'")
+                        continue
                     timestamp = parsed["timestamp"]
                     for key, value in parsed["values"].items():
                         datapoint = connector.data.get(key)

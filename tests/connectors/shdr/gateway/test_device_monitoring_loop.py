@@ -327,6 +327,29 @@ class SHDRGatewayDeviceLoopTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(open_connection.call_count, 2)
 
+    async def test_device_loop_ignores_shdr_commands(self):
+        """ Test SHDR commands are ignored. """
+        device = FakeDevice()
+        reader = AsyncMock()
+        reader.readline.side_effect = [
+            b"* PING\n",
+            asyncio.CancelledError()
+        ]
+
+        with patch("asyncio.open_connection", AsyncMock(return_value=(reader, FakeWriter()))):
+            with self.assertRaises(asyncio.CancelledError):
+                await self.gateway._device_loop(device)
+
+        sends = self.gateway.global_producer.send.call_args_list
+
+        datapoint_calls = [
+            call
+            for call in sends
+            if call.kwargs["asset_attribute"].id != "avail"
+        ]
+
+        self.assertEqual(len(datapoint_calls), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
