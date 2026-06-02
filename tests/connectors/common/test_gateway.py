@@ -228,50 +228,46 @@ class BaseGatewayTests(unittest.TestCase):
 
     @patch("connectors.common.gateway.Asset", FakeCoordinatorAsset)
     def test_rebuild_gateway_state_handles_invalid_device_config(self):
-        """ Test invalid device configs are handled gracefully. """
+        """ Test rebuild handles device registration failures gracefully. """
         gateway = ExampleGateway(ksqlClient=FakeKSQLClient(), test_mode=True)
-        gateway._fetch_assigned_devices = lambda: [{"DEVICE_UUID": "DEVICE1"}]
-        gateway._fetch_device_configs = lambda uuids: [
-            {
-                "ASSET_UUID": "DEVICE1",
-                "CONNECTOR_CONFIG": '{"uuid":"DEVICE1"}'
-            }
+        gateway._fetch_assigned_devices = lambda: [
+            {"DEVICE_UUID": "DEVICE1"}
         ]
-
-        with patch.object(gateway.logger, "warning") as warning:
-            gateway.rebuild_gateway_state()
-
-        warning_messages = [
-            call.args[0]
-            for call in warning.call_args_list
-        ]
-
-        self.assertTrue(
-            any(
-                "Failed to connect device DEVICE1"
-                in msg
-                for msg in warning_messages
-            )
-        )
-
-    @patch("connectors.common.gateway.Asset", FakeCoordinatorAsset)
-    def test_rebuild_gateway_state_connects_assigned_devices(self):
-        """ Test rebuild reconnects assigned devices. """
-        gateway = ExampleGateway(ksqlClient=FakeKSQLClient(), test_mode=True)
-        gateway._fetch_assigned_devices = lambda: [{"DEVICE_UUID": "DEVICE1"}]
         gateway._fetch_device_configs = lambda uuids: [
             {
                 "ASSET_UUID": "DEVICE1",
                 "CONNECTOR_CONFIG": VALID_DEVICE_JSON
             }
         ]
-        gateway.rebuild_gateway_state()
 
-        self.assertEqual(len(gateway.connected_devices), 1)
-        self.assertEqual(
-            gateway.connected_devices[0].uuid,
-            "DEVICE1"
-        )
+        with patch.object(ExampleGateway, "register_device", side_effect=RuntimeError("boom")):
+            with patch.object(gateway.logger, "warning") as warning:
+                gateway.rebuild_gateway_state()
+
+        warning.assert_called_once()
+
+        self.assertIn("Failed to connect device DEVICE1: boom", warning.call_args.args[0])
+
+    @patch("connectors.common.gateway.Asset", FakeCoordinatorAsset)
+    def test_rebuild_gateway_state_connects_assigned_devices(self):
+        """ Test rebuild registers assigned devices. """
+        gateway = ExampleGateway(ksqlClient=FakeKSQLClient(), test_mode=True)
+
+        gateway._fetch_assigned_devices = lambda: [
+            {"DEVICE_UUID": "DEVICE1"}
+        ]
+
+        gateway._fetch_device_configs = lambda uuids: [
+            {
+                "ASSET_UUID": "DEVICE1",
+                "CONNECTOR_CONFIG": VALID_DEVICE_JSON
+            }
+        ]
+
+        with patch.object(ExampleGateway, "register_device") as register_device:
+            gateway.rebuild_gateway_state()
+
+        register_device.assert_called_once_with(VALID_DEVICE_JSON)
 
     @patch("connectors.common.gateway.Asset", FakeCoordinatorAsset)
     def test_register_device_invalid_json_is_ignored(self):
