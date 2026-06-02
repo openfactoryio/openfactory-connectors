@@ -6,11 +6,15 @@ from openfactory.exceptions import OFAException
 from openfactory.apps import OpenFactoryFastAPIApp, ofa_method
 from openfactory.schemas.devices import Device
 from openfactory.assets import Asset, AssetAttribute
+from openfactory.apps.attributefield import SampleAttribute
 
 
 class BaseGateway(OpenFactoryFastAPIApp):
 
     CONNECTOR_NAME: str | None = None
+
+    device_count = SampleAttribute(value=0, tag='Device.Count')
+    _device_count = 0
 
     def __init__(self, *args, **kwargs):
         """
@@ -175,9 +179,7 @@ class BaseGateway(OpenFactoryFastAPIApp):
                 continue
 
             try:
-                cfg = json.loads(raw_config)
-                device = Device(**cfg)
-                self.connect_device(device)
+                self.register_device(raw_config)
             except Exception as e:
                 self.logger.warning(f"Failed to connect device {dev_uuid}: {e}", exc_info=True)
 
@@ -201,6 +203,8 @@ class BaseGateway(OpenFactoryFastAPIApp):
             )
             asset.close()
             self.connect_device(device)
+            self._device_count = self._device_count + 1
+            self.device_count = self._device_count
         except Exception as e:
             self.logger.warning(f"Failed to connect device {device_config}: {e}", exc_info=True)
 
@@ -211,6 +215,8 @@ class BaseGateway(OpenFactoryFastAPIApp):
     ):
         self.logger.info(f"Deregistering device {device_uuid}")
         self.disconnect_device(device_uuid)
+        self._device_count = self._device_count - 1
+        self.device_count = self._device_count
 
     async def async_main_loop(self):
         """ asynchronous main loop """
