@@ -18,6 +18,7 @@ apps:
     image: shdr-gateway
     environment:
       - LOG_LEVEL=${SHDR_GATEWAY_LOG_LEVEL:-DEBUG}
+      - PROMETHEUS_DISABLE_CREATED_SERIES=true
     routing:
       expose: true
       port: 4000
