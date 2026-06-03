@@ -1,2 +1,2 @@
-# Requirements fromt he common module
+# Requirements from the common module
 prometheus-client>=0.20.0,<1.0
