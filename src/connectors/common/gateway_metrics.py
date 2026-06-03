@@ -24,6 +24,16 @@ KAFKA_TX_BYTES = Gauge(
     "Bytes transmitted by librdkafka"
 )
 
+KAFKA_BATCH_COUNT_AVG = Gauge(
+    "kafka_batch_count_avg",
+    "Average number of messages per Kafka Producer request"
+)
+
+KAFKA_BATCH_COUNT_P95 = Gauge(
+    "kafka_batch_count_p95",
+    "95th percentile number of messages per Kafka Producer request"
+)
+
 KAFKA_BROKER_RTT_AVG = Gauge(
     "kafka_broker_rtt_avg_seconds",
     "Average Kafka broker RTT in seconds",

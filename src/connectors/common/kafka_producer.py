@@ -36,6 +36,11 @@ def stats_callback(stats_json):
         gateway_metrics.KAFKA_BROKER_RTT_P95.labels(broker=broker_name).set(rtt.get("p95", 0) / 1_000_000)
         gateway_metrics.KAFKA_BROKER_TX_ERRORS.labels(broker=broker_name).set(broker.get("txerrs", 0))
 
+    for topic_stats in stats.get("topics", {}).values():
+        batchcnt = topic_stats.get("batchcnt", {})
+        gateway_metrics.KAFKA_BATCH_COUNT_AVG.set(batchcnt.get("avg", 0))
+        gateway_metrics.KAFKA_BATCH_COUNT_P95.set(batchcnt.get("p95", 0))
+
 
 class GlobalAssetProducer(Producer):
     """
@@ -64,7 +69,7 @@ class GlobalAssetProducer(Producer):
             {
                 'bootstrap.servers': bootstrap_servers,
                 'linger.ms': KAFKA_LINGER_MS,
-                'acks': 1,                                    # waits until the leader partition has received the message
+                'acks': 0,                                    # waits until the leader partition has received the message
                 'retries': 0,                                 # don't retry on errors
                 "statistics.interval.ms": 15000,              # statistics every 15s
             },

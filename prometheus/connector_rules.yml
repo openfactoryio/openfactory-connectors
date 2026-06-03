@@ -108,6 +108,20 @@ groups:
           component: "connector"
           role: "gateway"
 
+      # Average Kafka batchcnt per gateway (second)
+      - record: gateway:kafka_batchcnt_avg_per_gateway
+        expr: kafka_batch_count_avg
+        labels:
+          component: "connector"
+          role: "gateway"
+
+      # P95 Kafka batchcnt per gateway (second)
+      - record: gateway:kafka_batch_count_p95_per_gateway
+        expr: kafka_batch_count_p95
+        labels:
+          component: "connector"
+          role: "gateway"
+
       # Messages queued inside librdkafka
       - record: gateway:kafka_queue_messages_per_gateway
         expr: kafka_queue_messages
