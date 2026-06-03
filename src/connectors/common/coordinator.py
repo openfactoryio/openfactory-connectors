@@ -1,14 +1,21 @@
 import json
+import os
 from typing import Annotated
 from openfactory.apps import OpenFactoryFastAPIApp, ofa_method
+from openfactory.apps.attributefield import EventAttribute
 from openfactory.assets import Asset
 from openfactory.schemas.devices import Device
+from . import coordinator_metrics
+
+PROMETHEUS_METRICS_PATH = "/metrics"
 
 
 class BaseCoordinator(OpenFactoryFastAPIApp):
 
     CONNECTOR_NAME: str | None = None
     gateways = []
+
+    prometheus_metrics_path = EventAttribute(value=PROMETHEUS_METRICS_PATH, tag="Prometheus.metrics_path")
 
     def __init__(self, *args, **kwargs):
         """
@@ -43,6 +50,15 @@ class BaseCoordinator(OpenFactoryFastAPIApp):
 
         self.create_device_assignment_tables()
         self.discover_gateways()
+
+        # Coordinator build info metrics
+        coordinator_metrics.BUILD_INFO.info({
+            "version": os.environ.get('APPLICATION_VERSION', 'UNKNOWN'),
+            "swarm_node": os.environ.get('NODE_HOSTNAME', 'unknown'),
+        })
+
+        # Expose Prometheus metrics
+        self.api.get(PROMETHEUS_METRICS_PATH)(coordinator_metrics.metrics_endpoint)
 
     @property
     def assignment_source_table(self) -> str:
@@ -114,6 +130,7 @@ class BaseCoordinator(OpenFactoryFastAPIApp):
         return rows[0]["GATEWAY_UUID"]
 
     @ofa_method(description="Register a device")
+    @coordinator_metrics.DEVICE_ASSIGNMENT_LATENCY.time()
     def register_device(
         self,
         device_config: Annotated[str, "Device configuration"],
@@ -132,6 +149,7 @@ class BaseCoordinator(OpenFactoryFastAPIApp):
             self.logger.warning(f"Failed to register device {device_config}")
         else:
             try:
+                coordinator_metrics.DEVICE_ASSIGNMENTS_TOTAL.inc()
                 gateway.register_device(sender_uuid=self.asset_uuid, device_config=device_config)
                 self.ksql.insert_into_stream(self.assignment_source_table,
                                              [{"DEVICE_UUID": device.uuid, "GATEWAY_UUID": gateway.asset_uuid}])
