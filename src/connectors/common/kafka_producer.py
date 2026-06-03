@@ -17,6 +17,24 @@ from confluent_kafka import Producer
 from openfactory.assets import AssetAttribute
 from openfactory.kafka import KSQLDBClient
 from .config import KAFKA_LINGER_MS
+from . import gateway_metrics
+
+
+def stats_callback(stats_json):
+
+    # https://github.com/confluentinc/librdkafka/blob/master/STATISTICS.md
+    stats = json.loads(stats_json)
+
+    gateway_metrics.KAFKA_TX_MESSAGES.set(stats.get("txmsgs", 0))
+    gateway_metrics.KAFKA_TX_BYTES.set(stats.get("tx_bytes", 0))
+    gateway_metrics.KAFKA_QUEUE_MESSAGES.set(stats["msg_cnt"])
+    gateway_metrics.KAFKA_QUEUE_BYTES.set(stats["msg_size"])
+
+    for broker_name, broker in stats.get("brokers", {}).items():
+        rtt = broker.get("rtt", {})
+        gateway_metrics.KAFKA_BROKER_RTT_AVG.labels(broker=broker_name).set(rtt.get("avg", 0) / 1_000_000)
+        gateway_metrics.KAFKA_BROKER_RTT_P95.labels(broker=broker_name).set(rtt.get("p95", 0) / 1_000_000)
+        gateway_metrics.KAFKA_BROKER_TX_ERRORS.labels(broker=broker_name).set(broker.get("txerrs", 0))
 
 
 class GlobalAssetProducer(Producer):
@@ -46,9 +64,11 @@ class GlobalAssetProducer(Producer):
             {
                 'bootstrap.servers': bootstrap_servers,
                 'linger.ms': KAFKA_LINGER_MS,
-                'acks': 0,                                    # fire-and-forget: broker won't send ACK
+                'acks': 1,                                    # waits until the leader partition has received the message
                 'retries': 0,                                 # don't retry on errors
-            }
+                "statistics.interval.ms": 15000,              # statistics every 15s
+            },
+            stats_cb=stats_callback
         )
         self.ksql = ksqlClient
         self.topic = self.ksql.get_kafka_topic("ASSETS_STREAM")

@@ -1,12 +1,16 @@
 import json
 import time
 import asyncio
+import os
 from typing import Annotated
 from openfactory.exceptions import OFAException
 from openfactory.apps import OpenFactoryFastAPIApp, ofa_method
 from openfactory.schemas.devices import Device
 from openfactory.assets import Asset, AssetAttribute
-from openfactory.apps.attributefield import SampleAttribute
+from openfactory.apps.attributefield import SampleAttribute, EventAttribute
+from . import gateway_metrics
+
+PROMETHEUS_METRICS_PATH = "/metrics"
 
 
 class BaseGateway(OpenFactoryFastAPIApp):
@@ -14,6 +18,8 @@ class BaseGateway(OpenFactoryFastAPIApp):
     CONNECTOR_NAME: str | None = None
 
     device_count = SampleAttribute(value=0, tag='Device.Count')
+    prometheus_metrics_path = EventAttribute(value=PROMETHEUS_METRICS_PATH, tag="Prometheus.metrics_path")
+
     _device_count = 0
 
     def __init__(self, *args, **kwargs):
@@ -56,6 +62,15 @@ class BaseGateway(OpenFactoryFastAPIApp):
             self.logger.error(f"Coordinator {self.COORDINATOR_UUID} is not deployed")
             raise OFAException(f"Coordinator {self.COORDINATOR_UUID} is not deployed")
         self.register_gateway()
+
+        # Coordinator build info metrics
+        gateway_metrics.BUILD_INFO.info({
+            "version": os.environ.get('APPLICATION_VERSION', 'UNKNOWN'),
+            "swarm_node": os.environ.get('NODE_HOSTNAME', 'unknown'),
+        })
+
+        # Expose Prometheus metrics
+        self.api.get(PROMETHEUS_METRICS_PATH)(gateway_metrics.metrics_endpoint)
 
     @property
     def assignment_source_table(self) -> str:
@@ -205,6 +220,7 @@ class BaseGateway(OpenFactoryFastAPIApp):
             self.connect_device(device)
             self._device_count = self._device_count + 1
             self.device_count = self._device_count
+            gateway_metrics.GATEWAY_DEVICE_COUNT.set(self._device_count)
         except Exception as e:
             self.logger.warning(f"Failed to connect device {device_config}: {e}", exc_info=True)
 
@@ -217,6 +233,7 @@ class BaseGateway(OpenFactoryFastAPIApp):
         self.disconnect_device(device_uuid)
         self._device_count = self._device_count - 1
         self.device_count = self._device_count
+        gateway_metrics.GATEWAY_DEVICE_COUNT.set(self._device_count)
 
     async def async_main_loop(self):
         """ asynchronous main loop """
