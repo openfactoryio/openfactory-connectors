@@ -56,11 +56,11 @@ class BaseGateway(OpenFactoryFastAPIApp):
         # discover coordinator
         self._discover_coordinator()
 
-        # register gateway with coordinator
+        # wait coordinator becomes available
         self.coordinator = Asset(asset_uuid=self.COORDINATOR_UUID, ksqlClient=self.ksql)
-        if not self.coordinator.wait_until(attribute_id='avail', value="AVAILABLE", timeout=300):
-            self.logger.error(f"Coordinator {self.COORDINATOR_UUID} is not deployed")
-            raise OFAException(f"Coordinator {self.COORDINATOR_UUID} is not deployed")
+        self._wait_coordinator_available()
+
+        # register gateway with coordinator
         self.register_gateway()
 
         # Coordinator build info metrics
@@ -120,6 +120,15 @@ class BaseGateway(OpenFactoryFastAPIApp):
             self.logger.debug(f"{self.CONNECTOR_NAME} coordinator not found yet")
             time.sleep(1)
 
+    def _wait_coordinator_available(self) -> None:
+        """ Wait for connector coordinator to become available """
+        self.logger.info(f"Waiting for coordinator {self.COORDINATOR_UUID} to become available...")
+        while True:
+            if self.coordinator.wait_until(attribute_id='avail', value="AVAILABLE", timeout=30):
+                self.logger.info(f"Coordinator {self.COORDINATOR_UUID} is available.")
+                return
+            self.logger.info(f"Coordinator {self.COORDINATOR_UUID} not yet available")
+
     def _fetch_assigned_devices(self):
         query = f"""
         SELECT DEVICE_UUID
@@ -141,6 +150,7 @@ class BaseGateway(OpenFactoryFastAPIApp):
 
     def register_gateway(self):
         """ Register the Gateway with the coordinator. """
+        self.logger.info("Registering gateway with coordinator")
         try:
             self.coordinator.register_gateway(sender_uuid=self.asset_uuid, gateway_uuid=self.asset_uuid)
         except TypeError:
