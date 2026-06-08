@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from openfactory.kafka import KSQLDBClient
 from openfactory.schemas.devices import Device
 from openfactory.assets import AssetAttribute
+from openfactory.assets.utils import current_timestamp
 from connectors.common.gateway import BaseGateway
 from connectors.common.kafka_producer import GlobalAssetProducer
 
@@ -156,7 +157,8 @@ class SHDRGateway(BaseGateway):
                                 type=datapoint.type,
                                 tag=datapoint.tag,
                                 timestamp=timestamp
-                                )
+                                ),
+                            ingestion_timestamp=current_timestamp()
                             )
                         self.logger.debug(f"[{device.uuid}] ({timestamp}) {key}={value} tag={datapoint.tag}")
 
