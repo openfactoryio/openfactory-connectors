@@ -200,8 +200,9 @@ class BaseGatewayTests(unittest.TestCase):
         with self.assertRaises(OFAException):
             gateway.register_gateway()
 
+    @patch.object(BaseGateway, "_wait_coordinator_available")
     @patch("connectors.common.gateway.Asset", FakeCoordinatorAsset)
-    def test_rebuild_gateway_state_with_no_devices_returns(self):
+    def test_rebuild_gateway_state_with_no_devices_returns(self, _wait):
         """ Test rebuild exits when no devices are assigned. """
         gateway = ExampleGateway(ksqlClient=FakeKSQLClient(), test_mode=True)
         gateway._fetch_assigned_devices = lambda: []
@@ -209,8 +210,9 @@ class BaseGatewayTests(unittest.TestCase):
 
         self.assertEqual(len(gateway.connected_devices), 0)
 
+    @patch.object(BaseGateway, "_wait_coordinator_available")
     @patch("connectors.common.gateway.Asset", FakeCoordinatorAsset)
-    def test_rebuild_gateway_state_skips_malformed_rows(self):
+    def test_rebuild_gateway_state_skips_malformed_rows(self, _wait):
         """ Test malformed ksqlDB rows are ignored. """
         gateway = ExampleGateway(ksqlClient=FakeKSQLClient(), test_mode=True)
         gateway._fetch_assigned_devices = lambda: [{"DEVICE_UUID": "DEVICE1"}]
@@ -226,8 +228,9 @@ class BaseGatewayTests(unittest.TestCase):
 
         self.assertIn("Skipping malformed ksqlDB row", warning_messages[0])
 
+    @patch.object(BaseGateway, "_wait_coordinator_available")
     @patch("connectors.common.gateway.Asset", FakeCoordinatorAsset)
-    def test_rebuild_gateway_state_handles_invalid_device_config(self):
+    def test_rebuild_gateway_state_handles_invalid_device_config(self, _wait):
         """ Test rebuild handles device registration failures gracefully. """
         gateway = ExampleGateway(ksqlClient=FakeKSQLClient(), test_mode=True)
         gateway._fetch_assigned_devices = lambda: [
@@ -248,8 +251,9 @@ class BaseGatewayTests(unittest.TestCase):
 
         self.assertIn("Failed to connect device DEVICE1: boom", warning.call_args.args[0])
 
+    @patch.object(BaseGateway, "_wait_coordinator_available")
     @patch("connectors.common.gateway.Asset", FakeCoordinatorAsset)
-    def test_rebuild_gateway_state_connects_assigned_devices(self):
+    def test_rebuild_gateway_state_connects_assigned_devices(self, _wait):
         """ Test rebuild registers assigned devices. """
         gateway = ExampleGateway(ksqlClient=FakeKSQLClient(), test_mode=True)
 
@@ -290,30 +294,28 @@ class BaseGatewayTests(unittest.TestCase):
             )
         )
 
+    @patch.object(BaseGateway, "_wait_coordinator_available")
     @patch("connectors.common.gateway.Asset")
-    def test_register_device_connects_device(self, asset_cls):
+    def test_register_device_connects_device(self, asset_cls, _wait):
         """ Test register_device connects validated devices. """
         asset_cls.return_value = Mock()
+
         gateway = ExampleGateway(ksqlClient=FakeKSQLClient(), test_mode=True)
         gateway.register_device(VALID_DEVICE_JSON)
 
         self.assertEqual(len(gateway.connected_devices), 1)
-        self.assertEqual(
-            gateway.connected_devices[0].uuid,
-            "DEVICE1"
-        )
+        self.assertEqual(gateway.connected_devices[0].uuid, "DEVICE1")
 
+    @patch.object(BaseGateway, "_wait_coordinator_available")
     @patch("connectors.common.gateway.Asset")
-    def test_deregister_device_disconnects_device(self, asset_cls):
+    def test_deregister_device_disconnects_device(self, asset_cls, _wait):
         """ Test deregistration disconnects the device. """
         asset_cls.return_value = Mock()
+
         gateway = ExampleGateway(ksqlClient=FakeKSQLClient(), test_mode=True)
         gateway.deregister_device("DEVICE1")
 
-        self.assertEqual(
-            gateway.disconnected_devices,
-            ["DEVICE1"]
-        )
+        self.assertEqual(gateway.disconnected_devices, ["DEVICE1"])
 
     @patch("connectors.common.gateway.Asset", FakeCoordinatorAsset)
     def test_initialization_discovers_correct_coordinator_type(self):
@@ -328,8 +330,44 @@ class BaseGatewayTests(unittest.TestCase):
             )
         )
 
+    def test_wait_coordinator_available_returns_when_available(self):
+        """ Test coordinator availability check succeeds immediately. """
+        gateway = object.__new__(ExampleGateway)
+
+        coordinator = Mock()
+        coordinator.wait_until.return_value = True
+
+        object.__setattr__(gateway, "coordinator", coordinator)
+        object.__setattr__(gateway, "COORDINATOR_UUID", "TEST-COORDINATOR")
+        object.__setattr__(gateway, "logger", Mock())
+
+        gateway._wait_coordinator_available(timeout=1)
+
+        coordinator.wait_until.assert_called_once_with(
+            attribute_id="avail",
+            value="AVAILABLE",
+            timeout=30
+        )
+
+    def test_wait_coordinator_available_times_out(self):
+        """ Test coordinator availability check raises on timeout. """
+        gateway = object.__new__(ExampleGateway)
+
+        coordinator = Mock()
+        coordinator.wait_until.return_value = False
+
+        object.__setattr__(gateway, "coordinator", coordinator)
+        object.__setattr__(gateway, "COORDINATOR_UUID", "TEST-COORDINATOR")
+        object.__setattr__(gateway, "logger", Mock())
+
+        with self.assertRaises(OFAException):
+            gateway._wait_coordinator_available(timeout=0)
+
+        coordinator.wait_until.assert_called()
+
+    @patch.object(BaseGateway, "_wait_coordinator_available")
     @patch("connectors.common.gateway.Asset")
-    def test_register_device_records_gateway_attribute(self, asset_cls):
+    def test_register_device_records_gateway_attribute(self, asset_cls, _wait):
         """ Test register_device records gateway attribute in the device asset. """
         asset_cls.side_effect = asset_factory
         gateway = ExampleGateway(ksqlClient=FakeKSQLClient(), test_mode=True)
@@ -341,8 +379,9 @@ class BaseGatewayTests(unittest.TestCase):
         self.assertEqual(asset.attributes[0].id, "gateway")
         self.assertEqual(asset.attributes[0].value, gateway.asset_uuid)
 
+    @patch.object(BaseGateway, "_wait_coordinator_available")
     @patch("connectors.common.gateway.Asset")
-    def test_register_device_closes_asset(self, asset_cls):
+    def test_register_device_closes_asset(self, asset_cls, _wait):
         """ Test register_device closes device asset. """
         asset_cls.side_effect = asset_factory
         gateway = ExampleGateway(ksqlClient=FakeKSQLClient(), test_mode=True)
@@ -350,8 +389,9 @@ class BaseGatewayTests(unittest.TestCase):
 
         self.assertTrue(FakeDeviceAsset.last_instance.closed)
 
+    @patch.object(BaseGateway, "_wait_coordinator_available")
     @patch("connectors.common.gateway.Asset")
-    def test_register_device_handles_asset_errors(self, asset_cls):
+    def test_register_device_handles_asset_errors(self, asset_cls, _wait):
         """ Test asset registration failures are handled gracefully. """
         asset_cls.side_effect = asset_factory
         gateway = ExampleGateway(ksqlClient=FakeKSQLClient(), test_mode=True)
@@ -365,18 +405,8 @@ class BaseGatewayTests(unittest.TestCase):
             with patch.object(gateway.logger, "warning") as warning:
                 gateway.register_device(VALID_DEVICE_JSON)
 
-        warning_messages = [
-            call.args[0]
-            for call in warning.call_args_list
-        ]
-
-        self.assertTrue(
-            any(
-                "Failed to connect device"
-                in msg
-                for msg in warning_messages
-            )
-        )
+        warning_messages = [call.args[0] for call in warning.call_args_list]
+        self.assertTrue(any("Failed to connect device" in msg for msg in warning_messages))
 
     def test_wait_for_existence_of_tables_logs_missing_tables(self):
         """ Test missing tables are reported while waiting. """
@@ -403,8 +433,9 @@ class BaseGatewayTests(unittest.TestCase):
             gateway.logger.info.call_args[0][0]
         )
 
+    @patch.object(BaseGateway, "_wait_coordinator_available")
     @patch("connectors.common.gateway.Asset")
-    def test_register_device_updates_asset_and_connects_device(self, asset_cls):
+    def test_register_device_updates_asset_and_connects_device(self, asset_cls, _wait):
         """ Test register_device updates asset and connects device. """
         asset_cls.side_effect = asset_factory
         gateway = ExampleGateway(ksqlClient=FakeKSQLClient(), test_mode=True)
@@ -420,10 +451,13 @@ class BaseGatewayTests(unittest.TestCase):
         self.assertEqual(gateway.connected_devices[0].uuid, "DEVICE1")
 
     @patch("connectors.common.gateway.Asset", UnavailableCoordinatorAsset)
-    def test_initialization_requires_available_coordinator(self):
-        """ Test initialization fails when coordinator is unavailable. """
-        with self.assertRaises(OFAException):
-            ExampleGateway(ksqlClient=FakeKSQLClient(), test_mode=True)
+    def test_initialization_waits_for_coordinator_availability(self):
+        """ Test initialization waits for coordinator availability. """
+        with patch.object(BaseGateway, "_wait_coordinator_available", side_effect=OFAException("timeout")) as wait:
+            with self.assertRaises(OFAException):
+                ExampleGateway(ksqlClient=FakeKSQLClient(), test_mode=True)
+
+        wait.assert_called_once()
 
 
 if __name__ == "__main__":
