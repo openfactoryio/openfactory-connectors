@@ -120,13 +120,26 @@ class BaseGateway(OpenFactoryFastAPIApp):
             self.logger.debug(f"{self.CONNECTOR_NAME} coordinator not found yet")
             time.sleep(1)
 
-    def _wait_coordinator_available(self) -> None:
-        """ Wait for connector coordinator to become available """
+    def _wait_coordinator_available(self, timeout: float | None = None) -> None:
+        """
+        Wait for connector coordinator to become available.
+
+        Args:
+            timeout: Maximum time to wait in seconds. If None, wait forever.
+        """
         self.logger.info(f"Waiting for coordinator {self.COORDINATOR_UUID} to become available...")
+
+        start_time = time.time()
         while True:
-            if self.coordinator.wait_until(attribute_id='avail', value="AVAILABLE", timeout=30):
+            if self.coordinator.wait_until(attribute_id="avail", value="AVAILABLE", timeout=30):
                 self.logger.info(f"Coordinator {self.COORDINATOR_UUID} is available.")
                 return
+
+            if timeout is not None:
+                elapsed = time.time() - start_time
+                if elapsed >= timeout:
+                    raise OFAException(f"Coordinator {self.COORDINATOR_UUID} did not become available within {timeout} seconds.")
+
             self.logger.info(f"Coordinator {self.COORDINATOR_UUID} not yet available")
 
     def _fetch_assigned_devices(self):
