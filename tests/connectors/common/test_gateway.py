@@ -75,6 +75,7 @@ class ExampleGateway(BaseGateway):
     """ Concrete gateway used to exercise BaseGateway behavior. """
 
     CONNECTOR_NAME = "TEST"
+    registered_metrics = False
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -86,6 +87,9 @@ class ExampleGateway(BaseGateway):
 
     def disconnect_device(self, device_uuid):
         self.disconnected_devices.append(device_uuid)
+
+    def register_prometheus_metrics(self, metrics_port, metrics_path):
+        self.registered_metrics = True
 
 
 class IncompleteGateway(BaseGateway):
@@ -329,6 +333,13 @@ class BaseGatewayTests(unittest.TestCase):
                 for query in ksql.queries
             )
         )
+
+    @patch("connectors.common.gateway.Asset", FakeCoordinatorAsset)
+    def test_register_prometheus_metrics_is_called(self):
+        """ Test gateway register Prometheus metrics. """
+        ksql = FakeKSQLClient()
+        gateway = ExampleGateway(ksqlClient=ksql, test_mode=True)
+        self.assertTrue(gateway.registered_metrics)
 
     def test_wait_coordinator_available_returns_when_available(self):
         """ Test coordinator availability check succeeds immediately. """

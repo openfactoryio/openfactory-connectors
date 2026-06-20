@@ -27,9 +27,13 @@ class ExampleCoordinator(BaseCoordinator):
     """ Concrete coordinator used to exercise BaseCoordinator behavior. """
     CONNECTOR_NAME = "TEST"
     asset_uuid = "COORDINATOR"
+    registered_metrics = False
 
     def assign_gateway(self):
         return "TEST-GATEWAY"
+
+    def register_prometheus_metrics(self, metrics_port, metrics_path):
+        self.registered_metrics = True
 
 
 class MissingNameCoordinator(BaseCoordinator):
@@ -166,6 +170,12 @@ class BaseCoordinatorTests(unittest.TestCase):
 
         self.assertIn("GW1", coordinator.gateways)
         self.assertIn("GW2", coordinator.gateways)
+
+    def test_register_prometheus_metrics_is_called(self):
+        """ Test coordinator register Prometheus metrics. """
+        ksql = FakeKSQLClient()
+        coordinator = ExampleCoordinator(ksqlClient=ksql, test_mode=True)
+        self.assertTrue(coordinator.registered_metrics)
 
     def test_get_assigned_gateway_queries_assignment_table(self):
         """ Test that assignment query uses correct table. """
