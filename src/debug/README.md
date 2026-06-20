@@ -11,12 +11,12 @@ docker run -d -p 4841:4840 --name virtual-opcua-barcode-reader ghcr.io/openfacto
 ```
 and then register them with OpenFactory:
 ```bash
-ofa device up debug/dev_temp_sensors.yml
-ofa device up debug/dev_barcode_reader.yml
+ofa device up src/debug/dev_temp_sensors.yml
+ofa device up src/debug/dev_barcode_reader.yml
 ```
 
 ## Verify OpenFactory pipeline
 The code `subscribe_to_assets.py` subscribes to the assets deployed above:
 ```bash
-python debug/subscribe_to_assets.py
+python src/debug/subscribe_to_assets.py
 ```
