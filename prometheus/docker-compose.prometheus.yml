@@ -6,8 +6,6 @@ services:
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
       - ./connector_rules.yml:/etc/prometheus/connector_rules.yml
-      - ./opcua_connector_scrape.yml:/etc/prometheus/opcua_connector_scrape.yml
-      - ./shdr_connector_scrape.yml:/etc/prometheus/shdr_connector_scrape.yml
     ports:
       - "9090:9090"
     networks:
