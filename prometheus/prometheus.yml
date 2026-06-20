@@ -8,12 +8,8 @@ rule_files:
 
 # Include component-specific scrape configs
 scrape_configs:
-  - job_name: "opcua_connector"
-    file_sd_configs:
-      - files:
-          - "opcua_connector_scrape.yml"
 
-  - job_name: "shdr_connector"
-    file_sd_configs:
-      - files:
-          - "shdr_connector_scrape.yml"
+  - job_name: openfactory
+    http_sd_configs:
+      - url: http://prometheus-metrics-registry:4000/prometheus/targets
+        refresh_interval: 30s
