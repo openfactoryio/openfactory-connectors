@@ -2,7 +2,6 @@ import json
 import os
 from typing import Annotated
 from openfactory.apps import OpenFactoryFastAPIApp, ofa_method
-from openfactory.apps.attributefield import EventAttribute
 from openfactory.assets import Asset
 from openfactory.schemas.devices import Device
 from . import coordinator_metrics
@@ -14,8 +13,6 @@ class BaseCoordinator(OpenFactoryFastAPIApp):
 
     CONNECTOR_NAME: str | None = None
     gateways = []
-
-    prometheus_metrics_path = EventAttribute(value=PROMETHEUS_METRICS_PATH, tag="Prometheus.metrics_path")
 
     def __init__(self, *args, **kwargs):
         """
@@ -50,6 +47,9 @@ class BaseCoordinator(OpenFactoryFastAPIApp):
 
         self.create_device_assignment_tables()
         self.discover_gateways()
+
+        # Register metrics
+        self.register_prometheus_metrics(metrics_port=4000, metrics_path=PROMETHEUS_METRICS_PATH)
 
         # Coordinator build info metrics
         coordinator_metrics.BUILD_INFO.info({

@@ -7,7 +7,7 @@ from openfactory.exceptions import OFAException
 from openfactory.apps import OpenFactoryFastAPIApp, ofa_method
 from openfactory.schemas.devices import Device
 from openfactory.assets import Asset, AssetAttribute
-from openfactory.apps.attributefield import SampleAttribute, EventAttribute
+from openfactory.apps.attributefield import SampleAttribute
 from . import gateway_metrics
 
 PROMETHEUS_METRICS_PATH = "/metrics"
@@ -18,7 +18,6 @@ class BaseGateway(OpenFactoryFastAPIApp):
     CONNECTOR_NAME: str | None = None
 
     device_count = SampleAttribute(value=0, tag='Device.Count')
-    prometheus_metrics_path = EventAttribute(value=PROMETHEUS_METRICS_PATH, tag="Prometheus.metrics_path")
 
     _device_count = 0
 
@@ -62,6 +61,9 @@ class BaseGateway(OpenFactoryFastAPIApp):
 
         # register gateway with coordinator
         self.register_gateway()
+
+        # Register metrics
+        self.register_prometheus_metrics(metrics_port=4000, metrics_path=PROMETHEUS_METRICS_PATH)
 
         # Coordinator build info metrics
         gateway_metrics.BUILD_INFO.info({
