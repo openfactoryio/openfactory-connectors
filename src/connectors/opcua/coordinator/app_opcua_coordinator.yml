@@ -19,9 +19,5 @@ apps:
     environment:
       - LOG_LEVEL=${OPCUA_COORDINATOR_LOG_LEVEL:-INFO}
       - PROMETHEUS_DISABLE_CREATED_SERIES=true
-    routing:
-      expose: true
-      port: 4000
-      hostname: opcua-coordinator
     networks:
       - factory-net

@@ -19,10 +19,6 @@ apps:
     environment:
       - LOG_LEVEL=${OPCUA_GATEWAY_LOG_LEVEL:-INFO}
       - PROMETHEUS_DISABLE_CREATED_SERIES=true
-    routing:
-      expose: true
-      port: 4000
-      hostname: opcua-gateway-1
     networks:
       - factory-net
 
@@ -32,9 +28,5 @@ apps:
     environment:
       - LOG_LEVEL=${OPCUA_GATEWAY_LOG_LEVEL:-DEBUG}
       - PROMETHEUS_DISABLE_CREATED_SERIES=true
-    routing:
-      expose: true
-      port: 4000
-      hostname: opcua-gateway-2
     networks:
       - factory-net

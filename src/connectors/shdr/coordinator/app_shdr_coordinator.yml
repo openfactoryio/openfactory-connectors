@@ -19,9 +19,5 @@ apps:
     environment:
       - LOG_LEVEL=${SHDR_COORDINATOR_LOG_LEVEL:-DEBUG}
       - PROMETHEUS_DISABLE_CREATED_SERIES=true
-    routing:
-      expose: true
-      port: 4000
-      hostname: shdr-coordinator
     networks:
       - factory-net
