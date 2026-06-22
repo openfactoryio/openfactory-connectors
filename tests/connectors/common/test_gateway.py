@@ -299,12 +299,15 @@ class BaseGatewayTests(unittest.TestCase):
         )
 
     @patch.object(BaseGateway, "_wait_coordinator_available")
-    @patch("connectors.common.gateway.Asset")
-    def test_register_device_connects_device(self, asset_cls, _wait):
+    @patch("connectors.common.gateway.Asset", FakeCoordinatorAsset)
+    def test_register_device_connects_device(self, _wait):
         """ Test register_device connects validated devices. """
-        asset_cls.return_value = Mock()
+        gateway = ExampleGateway(
+            ksqlClient=FakeKSQLClient(),
+            test_mode=True
+        )
+        gateway.producer = Mock()
 
-        gateway = ExampleGateway(ksqlClient=FakeKSQLClient(), test_mode=True)
         gateway.register_device(VALID_DEVICE_JSON)
 
         self.assertEqual(len(gateway.connected_devices), 1)
@@ -377,47 +380,45 @@ class BaseGatewayTests(unittest.TestCase):
         coordinator.wait_until.assert_called()
 
     @patch.object(BaseGateway, "_wait_coordinator_available")
-    @patch("connectors.common.gateway.Asset")
-    def test_register_device_records_gateway_attribute(self, asset_cls, _wait):
-        """ Test register_device records gateway attribute in the device asset. """
-        asset_cls.side_effect = asset_factory
-        gateway = ExampleGateway(ksqlClient=FakeKSQLClient(), test_mode=True)
+    @patch("connectors.common.gateway.Asset", FakeCoordinatorAsset)
+    def test_register_device_records_gateway_attribute(self, _wait):
+        """ Test register_device publishes gateway attribute. """
+        gateway = ExampleGateway(
+            ksqlClient=FakeKSQLClient(),
+            test_mode=True
+        )
+        gateway.producer = Mock()
         gateway.register_device(VALID_DEVICE_JSON)
 
-        asset = FakeDeviceAsset.last_instance
+        gateway.producer.send_asset_attribute.assert_called_once()
 
-        self.assertEqual(len(asset.attributes), 1)
-        self.assertEqual(asset.attributes[0].id, "gateway")
-        self.assertEqual(asset.attributes[0].value, gateway.asset_uuid)
+        _, kwargs = gateway.producer.send_asset_attribute.call_args
+
+        self.assertEqual(kwargs["asset_uuid"], "DEVICE1")
+
+        attribute = kwargs["assetAttribute"]
+
+        self.assertEqual(attribute.id, "gateway")
+        self.assertEqual(attribute.value, gateway.asset_uuid)
+        self.assertEqual(attribute.tag, "TEST.Gateway")
 
     @patch.object(BaseGateway, "_wait_coordinator_available")
-    @patch("connectors.common.gateway.Asset")
-    def test_register_device_closes_asset(self, asset_cls, _wait):
-        """ Test register_device closes device asset. """
-        asset_cls.side_effect = asset_factory
-        gateway = ExampleGateway(ksqlClient=FakeKSQLClient(), test_mode=True)
+    @patch("connectors.common.gateway.Asset", FakeCoordinatorAsset)
+    @patch("connectors.common.gateway.os._exit")
+    def test_register_device_exits_on_producer_failure(self, mock_exit, _wait):
+        """ Test gateway exits when producer becomes unavailable. """
+
+        gateway = ExampleGateway(
+            ksqlClient=FakeKSQLClient(),
+            test_mode=True
+        )
+
+        gateway.producer = Mock()
+        gateway.producer.send_asset_attribute.side_effect = RuntimeError("boom")
+
         gateway.register_device(VALID_DEVICE_JSON)
 
-        self.assertTrue(FakeDeviceAsset.last_instance.closed)
-
-    @patch.object(BaseGateway, "_wait_coordinator_available")
-    @patch("connectors.common.gateway.Asset")
-    def test_register_device_handles_asset_errors(self, asset_cls, _wait):
-        """ Test asset registration failures are handled gracefully. """
-        asset_cls.side_effect = asset_factory
-        gateway = ExampleGateway(ksqlClient=FakeKSQLClient(), test_mode=True)
-
-        asset = FakeDeviceAsset("DEVICE1")
-        asset.raise_add_attribute = True
-
-        FakeDeviceAsset.last_instance = asset
-
-        with patch("connectors.common.gateway.Asset", return_value=asset):
-            with patch.object(gateway.logger, "warning") as warning:
-                gateway.register_device(VALID_DEVICE_JSON)
-
-        warning_messages = [call.args[0] for call in warning.call_args_list]
-        self.assertTrue(any("Failed to connect device" in msg for msg in warning_messages))
+        mock_exit.assert_called_once_with(1)
 
     def test_wait_for_existence_of_tables_logs_missing_tables(self):
         """ Test missing tables are reported while waiting. """
@@ -444,23 +445,6 @@ class BaseGatewayTests(unittest.TestCase):
             gateway.logger.info.call_args[0][0]
         )
 
-    @patch.object(BaseGateway, "_wait_coordinator_available")
-    @patch("connectors.common.gateway.Asset")
-    def test_register_device_updates_asset_and_connects_device(self, asset_cls, _wait):
-        """ Test register_device updates asset and connects device. """
-        asset_cls.side_effect = asset_factory
-        gateway = ExampleGateway(ksqlClient=FakeKSQLClient(), test_mode=True)
-        gateway.register_device(VALID_DEVICE_JSON)
-
-        asset = FakeDeviceAsset.last_instance
-
-        self.assertEqual(len(asset.attributes), 1)
-        self.assertEqual(asset.attributes[0].id, "gateway")
-        self.assertEqual(asset.attributes[0].value, gateway.asset_uuid)
-        self.assertTrue(asset.closed)
-        self.assertEqual(len(gateway.connected_devices), 1)
-        self.assertEqual(gateway.connected_devices[0].uuid, "DEVICE1")
-
     @patch("connectors.common.gateway.Asset", UnavailableCoordinatorAsset)
     def test_initialization_waits_for_coordinator_availability(self):
         """ Test initialization waits for coordinator availability. """
@@ -469,6 +453,24 @@ class BaseGatewayTests(unittest.TestCase):
                 ExampleGateway(ksqlClient=FakeKSQLClient(), test_mode=True)
 
         wait.assert_called_once()
+
+    @patch.object(BaseGateway, "_wait_coordinator_available")
+    @patch("connectors.common.gateway.Asset", FakeCoordinatorAsset)
+    @patch("connectors.common.gateway.gateway_metrics.GATEWAY_DEVICE_COUNT")
+    def test_register_device_updates_device_count(self, mock_metric, _wait):
+        """ Test device count is updated when registering a device. """
+
+        gateway = ExampleGateway(
+            ksqlClient=FakeKSQLClient(),
+            test_mode=True
+        )
+
+        gateway.producer = Mock()
+
+        gateway.register_device(VALID_DEVICE_JSON)
+
+        self.assertEqual(gateway._device_count, 1)
+        mock_metric.set.assert_called_once_with(1)
 
 
 if __name__ == "__main__":
