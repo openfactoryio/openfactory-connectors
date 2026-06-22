@@ -232,16 +232,20 @@ class BaseGateway(OpenFactoryFastAPIApp):
             cfg = json.loads(device_config)
             device = Device(**cfg)
             self.logger.info(f"Registering device {device.uuid}")
-            asset = Asset(device.uuid, ksqlClient=self.ksql)
-            asset.add_attribute(
-                AssetAttribute(
-                    id='gateway',
-                    type='Events',
-                    tag=f'{self.CONNECTOR_NAME}.Gateway',
-                    value=self.asset_uuid
-                )
+            attribute = AssetAttribute(
+                id='gateway',
+                type='Events',
+                tag=f'{self.CONNECTOR_NAME}.Gateway',
+                value=self.asset_uuid
             )
-            asset.close()
+            try:
+                self.producer.send_asset_attribute(
+                    asset_uuid=device.uuid,
+                    assetAttribute=attribute
+                )
+            except Exception as e:
+                self.logger.critical(f"Producer failure while registering device {device.uuid}: {e}", exc_info=True)
+                os._exit(1)
             self.connect_device(device)
             self._device_count = self._device_count + 1
             self.device_count = self._device_count
