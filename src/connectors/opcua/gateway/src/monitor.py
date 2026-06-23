@@ -492,4 +492,8 @@ class DeviceMonitor:
                 await self.subscription.delete()
         except Exception:
             pass
+        try:
+            self.asset.close()
+        except Exception:
+            pass
         self.log.info(f"[{self.dev_uuid}] OPC UA connector removed successfully")
