@@ -149,6 +149,7 @@ class SubscriptionHandler:
             severity = getattr(event, "Severity", None)
             source_name = getattr(event, "SourceName", "opcua")
             event_type = getattr(event, "EventType", None)
+
             tag = "OPCUAEvent"
             if event_type:
                 event_type_node = self.client.get_node(event_type)
@@ -165,26 +166,25 @@ class SubscriptionHandler:
 
             self.logger.debug(f"Event from {source_name}: {message_text}")
 
+            device_timestamp = opcua_event_timestamp(event)
+            attribute = AssetAttribute(
+                id=f"{source_name}_event",
+                value=message_text,
+                type="Condition",
+                tag=tag,
+                timestamp=openfactory_timestamp(device_timestamp),
+            )
+
         except Exception as e:
             self.logger.error(f"Error parsing event: {e}, raw event={event}")
-            message_text = "UNAVAILABLE"
-
-        device_timestamp = opcua_event_timestamp(event)
-        attribute = AssetAttribute(
-            id=f"{source_name}_event",
-            value=message_text,
-            type="Condition",
-            tag=tag,
-            timestamp=openfactory_timestamp(device_timestamp),
-            )
+            return
 
         try:
             self.global_producer.send(
                 asset_uuid=self.opcua_device_uuid,
                 asset_attribute=attribute,
-                ingestion_timestamp=ingestion_timestamp
+                ingestion_timestamp=ingestion_timestamp,
             )
             self.logger.debug(f"Sent data to Kafka {str(attribute)}")
         except Exception as e:
             self.logger.error(f"Failed to send event to Kafka for {self.opcua_device_uuid}: {e}")
-            return
