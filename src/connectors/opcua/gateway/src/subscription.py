@@ -76,6 +76,7 @@ class SubscriptionHandler:
                 containing the monitored item, DataValue, timestamps,
                 and status information.
         """
+        ingestion_timestamp = current_timestamp()
 
         # Extract variable name
         info = self.node_map.get(node, {})
@@ -122,7 +123,7 @@ class SubscriptionHandler:
             self.global_producer.send(
                 asset_uuid=self.opcua_device_uuid,
                 asset_attribute=attribute,
-                ingestion_timestamp=current_timestamp()
+                ingestion_timestamp=ingestion_timestamp
             )
             self.logger.debug(f"Sent data to Kafka {str(attribute)}")
         except Exception as e:
@@ -141,6 +142,8 @@ class SubscriptionHandler:
         Args:
             event (Any): The OPC UA event object delivered by the subscription.
         """
+        ingestion_timestamp = current_timestamp()
+
         try:
             message = getattr(event, "Message", None)
             severity = getattr(event, "Severity", None)
@@ -179,7 +182,7 @@ class SubscriptionHandler:
             self.global_producer.send(
                 asset_uuid=self.opcua_device_uuid,
                 asset_attribute=attribute,
-                ingestion_timestamp=current_timestamp()
+                ingestion_timestamp=ingestion_timestamp
             )
             self.logger.debug(f"Sent data to Kafka {str(attribute)}")
         except Exception as e:

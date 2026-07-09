@@ -133,6 +133,7 @@ class SHDRGateway(BaseGateway):
 
                 while True:
                     line = await reader.readline()
+                    ingestion_timestamp = current_timestamp()
                     if not line:
                         # socket closed
                         self.logger.warning("SHDR stream closed")
@@ -158,7 +159,7 @@ class SHDRGateway(BaseGateway):
                                 tag=datapoint.tag,
                                 timestamp=timestamp
                                 ),
-                            ingestion_timestamp=current_timestamp()
+                            ingestion_timestamp=ingestion_timestamp
                             )
                         self.logger.debug(f"[{device.uuid}] ({timestamp}) {key}={value} tag={datapoint.tag}")
 
