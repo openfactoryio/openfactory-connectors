@@ -41,7 +41,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 FROM python:3.12-slim
 
 # Arguments for non-root user creation
-ARG UNAME=shdr-gateway
+ARG UNAME=opcua-gateway
 ARG UID=1200
 ARG GID=1200
 
