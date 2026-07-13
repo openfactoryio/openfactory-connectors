@@ -8,6 +8,7 @@ from openfactory.apps import OpenFactoryFastAPIApp, ofa_method
 from openfactory.schemas.devices import Device
 from openfactory.assets import Asset, AssetAttribute
 from openfactory.apps.attributefield import SampleAttribute
+from openfactory.utils import deregister_asset
 from . import gateway_metrics
 
 PROMETHEUS_METRICS_PATH = "/metrics"
@@ -260,6 +261,7 @@ class BaseGateway(OpenFactoryFastAPIApp):
     ):
         self.logger.info(f"Deregistering device {device_uuid}")
         self.disconnect_device(device_uuid)
+        deregister_asset(device_uuid, ksqlClient=self.ksql, bootstrap_servers=self.bootstrap_servers)
         self._device_count = self._device_count - 1
         self.device_count = self._device_count
         gateway_metrics.GATEWAY_DEVICE_COUNT.set(self._device_count)
