@@ -313,16 +313,24 @@ class BaseGatewayTests(unittest.TestCase):
         self.assertEqual(len(gateway.connected_devices), 1)
         self.assertEqual(gateway.connected_devices[0].uuid, "DEVICE1")
 
-    @patch.object(BaseGateway, "_wait_coordinator_available")
+    @patch("connectors.common.gateway.deregister_asset")
     @patch("connectors.common.gateway.Asset")
-    def test_deregister_device_disconnects_device(self, asset_cls, _wait):
-        """ Test deregistration disconnects the device. """
+    def test_deregister_device_disconnects_device(self, asset_cls, mock_deregister_asset):
+        """ Test deregistration disconnects the device and removes its asset. """
+
         asset_cls.return_value = Mock()
 
         gateway = ExampleGateway(ksqlClient=FakeKSQLClient(), test_mode=True)
+
         gateway.deregister_device("DEVICE1")
 
         self.assertEqual(gateway.disconnected_devices, ["DEVICE1"])
+
+        mock_deregister_asset.assert_called_once_with(
+            "DEVICE1",
+            ksqlClient=gateway.ksql,
+            bootstrap_servers=gateway.bootstrap_servers,
+        )
 
     @patch("connectors.common.gateway.Asset", FakeCoordinatorAsset)
     def test_initialization_discovers_correct_coordinator_type(self):
