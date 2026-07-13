@@ -473,20 +473,8 @@ class DeviceMonitor:
             await poll_node.read_display_name()  # exception triggers reconnect
 
     async def _cleanup(self) -> None:
-        """
-        Cleanup resources when monitor task is cancelled.
-
-        Ensures asset availability is set to UNAVAILABLE and deletes the subscription.
-        """
+        """ Cleanup resources when monitor task is cancelled. """
         self.log.info(f"[{self.dev_uuid}] Monitor task cancelled; cleaning up")
-        try:
-            self.global_producer.send(
-                asset_uuid=self.dev_uuid,
-                asset_attribute=AssetAttribute(id='avail', value="UNAVAILABLE", tag="Availability", type="Events")
-            )
-            self.log.info(f"[{self.dev_uuid}] Sent UNAVAILABLE status to OpenFactory")
-        except Exception as e:
-            self.log.error(f"[{self.dev_uuid}] Unable to send UNAVAILABLE status to OpenFactory: {e}")
         try:
             if self.subscription:
                 await self.subscription.delete()
