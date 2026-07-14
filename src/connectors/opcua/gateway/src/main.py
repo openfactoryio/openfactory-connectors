@@ -1,5 +1,6 @@
 import asyncio
 import os
+import logging
 from openfactory.kafka import KSQLDBClient
 from openfactory.schemas.devices import Device
 from connectors.common.gateway import BaseGateway
@@ -35,6 +36,12 @@ class OPCUAGateway(BaseGateway):
     def __init__(self, *args, **kwargs):
 
         super().__init__(*args, **kwargs)
+
+        # Reduce asyncua logging verbosity.
+        logging.getLogger("asyncua.client.ua_session.UaSession").setLevel(logging.CRITICAL)
+        logging.getLogger("asyncua.client.client").setLevel(logging.CRITICAL)
+        logging.getLogger("asyncua.client.ua_client.UaClient").setLevel(logging.CRITICAL)
+        logging.getLogger("asyncua.client.ua_client.UASocketProtocol").setLevel(logging.CRITICAL)
 
         # Global Kafka Producer
         self.global_producer = GlobalAssetProducer(ksqlClient=self.ksql)
