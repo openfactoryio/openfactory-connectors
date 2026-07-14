@@ -78,6 +78,10 @@ devices:
         hum:
           browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor2/2:Humidity
           tag: Humidity
+        temp_unit:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor2/2:TemperatureUnit
+          tag: TemperatureUnit
+          access_level: rw
 
       events:
         sensor_events:
