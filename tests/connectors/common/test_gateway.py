@@ -1,4 +1,5 @@
 import unittest
+import os
 from unittest.mock import Mock, patch
 from openfactory.exceptions import OFAException
 from connectors.common.gateway import BaseGateway
@@ -128,6 +129,28 @@ class BaseGatewayTests(unittest.TestCase):
     """
     Unittests for BaseGateway.
     """
+
+    @patch.dict(os.environ, {"LOG_HTTP_REQUESTS": "true"})
+    @patch("connectors.common.gateway.Asset", FakeCoordinatorAsset)
+    def test_log_http_requests_enabled_from_environment(self):
+        """ Test LOG_HTTP_REQUESTS enables HTTP request logging. """
+        gateway = ExampleGateway(
+            ksqlClient=FakeKSQLClient(),
+            test_mode=True
+        )
+
+        self.assertTrue(gateway.log_http_requests)
+
+    @patch.dict(os.environ, {}, clear=True)
+    @patch("connectors.common.gateway.Asset", FakeCoordinatorAsset)
+    def test_log_http_requests_disabled_by_default(self):
+        """ Test HTTP request logging is disabled by default. """
+        gateway = ExampleGateway(
+            ksqlClient=FakeKSQLClient(),
+            test_mode=True
+        )
+
+        self.assertFalse(gateway.log_http_requests)
 
     def test_requires_connector_name(self):
         """ Test that CONNECTOR_NAME must be defined. """

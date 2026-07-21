@@ -1,5 +1,6 @@
 import json
 import unittest
+import os
 from unittest.mock import patch
 from openfactory.schemas.devices import Device
 from connectors.common.coordinator import BaseCoordinator
@@ -111,6 +112,26 @@ class BaseCoordinatorTests(unittest.TestCase):
     """
     Unittests for BaseCoordinator
     """
+
+    @patch.dict(os.environ, {"LOG_HTTP_REQUESTS": "true"})
+    def test_log_http_requests_enabled(self):
+        """ Test LOG_HTTP_REQUESTS enables HTTP request logging. """
+        coordinator = ExampleCoordinator(
+            ksqlClient=FakeKSQLClient(),
+            test_mode=True,
+        )
+
+        self.assertTrue(coordinator.log_http_requests)
+
+    @patch.dict(os.environ, {}, clear=True)
+    def test_log_http_requests_disabled_by_default(self):
+        """ Test HTTP request logging is disabled by default. """
+        coordinator = ExampleCoordinator(
+            ksqlClient=FakeKSQLClient(),
+            test_mode=True,
+        )
+
+        self.assertFalse(coordinator.log_http_requests)
 
     def test_valid_device_fixture(self):
         """
