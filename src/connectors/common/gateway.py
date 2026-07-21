@@ -36,6 +36,11 @@ class BaseGateway(OpenFactoryFastAPIApp):
             loglevel: Logging level (e.g., ``INFO``, ``DEBUG``).
             test_mode: Enables test mode (disables live Kafka/ksql interaction).
 
+        Environment variables:
+            LOG_HTTP_REQUESTS: Enables HTTP request logging when set to one
+                of ``1``, ``true``, ``yes``, or ``on`` (case-insensitive).
+                Defaults to ``false``.
+
         See also:
             :class:`OpenFactoryFastAPIApp` for full initialization
             details and environment variable handling.
@@ -43,7 +48,10 @@ class BaseGateway(OpenFactoryFastAPIApp):
         if self.CONNECTOR_NAME is None:
             raise NotImplementedError(f"{self.__class__.__name__} must define CONNECTOR_NAME")
 
-        super().__init__(*args, **kwargs)
+        log_http_requests = os.getenv("LOG_HTTP_REQUESTS", "false").strip().lower() in {
+            "1", "true", "yes", "on"
+            }
+        super().__init__(*args, **kwargs, log_http_requests=log_http_requests)
 
         # expose OFA app inside FastAPI
         self.api.state.ofa_app = self
