@@ -328,6 +328,7 @@ Connector implementations may expose additional metrics.
 | `KAFKA_BROKER`        | Kafka bootstrap servers         | Yes      |
 | `KSQLDB_URL`          | ksqlDB server URL               | Yes      |
 | `APPLICATION_VERSION` | Application version for metrics | Optional |
+| `LOG_HTTP_REQUESTS`   | Enables HTTP request logging when set to `1`, `true`, `yes`, or `on`  case-insensitive). Defaults to `false`. | Optional |
 | `NODE_HOSTNAME`       | Node hostname for metrics       | Optional |
 
 ---
