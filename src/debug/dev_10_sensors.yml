@@ -1,0 +1,309 @@
+# ---------------------------------------------------------------------------------------
+# 🏭 OpenFactory Device Configuration File
+#
+# To be used in the Dev Container of this repo
+#
+# Deploy with:
+#   docker run -d --name virtual-opcua-sensor-10 -p 4842:4840 -e NUM_SENSORS=10 ghcr.io/openfactoryio/virtual-opcua-sensor
+# ---------------------------------------------------------------------------------------
+
+devices:
+  vtempsens-1000:
+    uuid: VIRTUAL-OPCUA-SENS-1000
+
+    connector:
+      type: opcua
+
+      server:
+        uri: opc.tcp://${CONTAINER_IP}:4842
+        subscription:                       # Server-level defaults
+          publishing_interval: 10           # ms, for subscription object
+          queue_size: 1                     # default per monitored item
+          sampling_interval: 0              # ms, 0 = event-driven if supported
+
+      variables:
+        temp:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor1/2:Temperature
+          tag: Temperature
+        hum:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor1/2:Humidity
+          tag: Humidity
+
+      constants:
+        sensor_model: 
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor1/2:SensorModel
+          tag: SensorModel
+
+      methods:
+        sensor_methods:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor1
+
+  vtempsens-1001:
+    uuid: VIRTUAL-OPCUA-SENS-1001
+
+    connector:
+      type: opcua
+
+      server:
+        uri: oopc.tcp://${CONTAINER_IP}:4842
+        subscription:                       # Server-level defaults
+          publishing_interval: 10           # ms, for subscription object
+          queue_size: 1                     # default per monitored item
+          sampling_interval: 0              # ms, 0 = event-driven if supported
+
+      variables:
+        temp:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor2/2:Temperature
+          tag: Temperature
+        hum:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor2/2:Humidity
+          tag: Humidity
+
+      constants:
+        sensor_model: 
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor2/2:SensorModel
+          tag: SensorModel
+
+      methods:
+        sensor_methods:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor2
+
+  vtempsens-1002:
+    uuid: VIRTUAL-OPCUA-SENS-1002
+
+    connector:
+      type: opcua
+
+      server:
+        uri: oopc.tcp://${CONTAINER_IP}:4842
+        subscription:                       # Server-level defaults
+          publishing_interval: 10           # ms, for subscription object
+          queue_size: 1                     # default per monitored item
+          sampling_interval: 0              # ms, 0 = event-driven if supported
+
+      variables:
+        temp:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor3/2:Temperature
+          tag: Temperature
+        hum:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor3/2:Humidity
+          tag: Humidity
+
+      constants:
+        sensor_model: 
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor3/2:SensorModel
+          tag: SensorModel
+
+      methods:
+        sensor_methods:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor3
+
+  vtempsens-1003:
+    uuid: VIRTUAL-OPCUA-SENS-1003
+
+    connector:
+      type: opcua
+
+      server:
+        uri: oopc.tcp://${CONTAINER_IP}:4842
+        subscription:                       # Server-level defaults
+          publishing_interval: 10           # ms, for subscription object
+          queue_size: 1                     # default per monitored item
+          sampling_interval: 0              # ms, 0 = event-driven if supported
+
+      variables:
+        temp:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor4/2:Temperature
+          tag: Temperature
+        hum:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor4/2:Humidity
+          tag: Humidity
+
+      constants:
+        sensor_model: 
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor4/2:SensorModel
+          tag: SensorModel
+
+      methods:
+        sensor_methods:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor4
+
+  vtempsens-1004:
+    uuid: VIRTUAL-OPCUA-SENS-1004
+
+    connector:
+      type: opcua
+
+      server:
+        uri: oopc.tcp://${CONTAINER_IP}:4842
+        subscription:                       # Server-level defaults
+          publishing_interval: 10           # ms, for subscription object
+          queue_size: 1                     # default per monitored item
+          sampling_interval: 0              # ms, 0 = event-driven if supported
+
+      variables:
+        temp:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor5/2:Temperature
+          tag: Temperature
+        hum:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor5/2:Humidity
+          tag: Humidity
+
+      constants:
+        sensor_model: 
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor5/2:SensorModel
+          tag: SensorModel
+
+      methods:
+        sensor_methods:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor5
+
+  vtempsens-1005:
+    uuid: VIRTUAL-OPCUA-SENS-1005
+
+    connector:
+      type: opcua
+
+      server:
+        uri: oopc.tcp://${CONTAINER_IP}:4842
+        subscription:                       # Server-level defaults
+          publishing_interval: 10           # ms, for subscription object
+          queue_size: 1                     # default per monitored item
+          sampling_interval: 0              # ms, 0 = event-driven if supported
+
+      variables:
+        temp:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor6/2:Temperature
+          tag: Temperature
+        hum:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor6/2:Humidity
+          tag: Humidity
+
+      constants:
+        sensor_model: 
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor6/2:SensorModel
+          tag: SensorModel
+
+      methods:
+        sensor_methods:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor6
+
+  vtempsens-1006:
+    uuid: VIRTUAL-OPCUA-SENS-1006
+
+    connector:
+      type: opcua
+
+      server:
+        uri: oopc.tcp://${CONTAINER_IP}:4842
+        subscription:                       # Server-level defaults
+          publishing_interval: 10           # ms, for subscription object
+          queue_size: 1                     # default per monitored item
+          sampling_interval: 0              # ms, 0 = event-driven if supported
+
+      variables:
+        temp:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor7/2:Temperature
+          tag: Temperature
+        hum:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor7/2:Humidity
+          tag: Humidity
+
+      constants:
+        sensor_model: 
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor7/2:SensorModel
+          tag: SensorModel
+
+      methods:
+        sensor_methods:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor7
+
+  vtempsens-1007:
+    uuid: VIRTUAL-OPCUA-SENS-1007
+
+    connector:
+      type: opcua
+
+      server:
+        uri: oopc.tcp://${CONTAINER_IP}:4842
+        subscription:                       # Server-level defaults
+          publishing_interval: 10           # ms, for subscription object
+          queue_size: 1                     # default per monitored item
+          sampling_interval: 0              # ms, 0 = event-driven if supported
+
+      variables:
+        temp:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor8/2:Temperature
+          tag: Temperature
+        hum:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor8/2:Humidity
+          tag: Humidity
+
+      constants:
+        sensor_model: 
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor8/2:SensorModel
+          tag: SensorModel
+
+      methods:
+        sensor_methods:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor8
+
+  vtempsens-1008:
+    uuid: VIRTUAL-OPCUA-SENS-1008
+
+    connector:
+      type: opcua
+
+      server:
+        uri: oopc.tcp://${CONTAINER_IP}:4842
+        subscription:                       # Server-level defaults
+          publishing_interval: 10           # ms, for subscription object
+          queue_size: 1                     # default per monitored item
+          sampling_interval: 0              # ms, 0 = event-driven if supported
+
+      variables:
+        temp:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor9/2:Temperature
+          tag: Temperature
+        hum:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor9/2:Humidity
+          tag: Humidity
+
+      constants:
+        sensor_model: 
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor9/2:SensorModel
+          tag: SensorModel
+
+      methods:
+        sensor_methods:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor9
+
+  vtempsens-1009:
+    uuid: VIRTUAL-OPCUA-SENS-1009
+
+    connector:
+      type: opcua
+
+      server:
+        uri: oopc.tcp://${CONTAINER_IP}:4842
+        subscription:                       # Server-level defaults
+          publishing_interval: 10           # ms, for subscription object
+          queue_size: 1                     # default per monitored item
+          sampling_interval: 0              # ms, 0 = event-driven if supported
+
+      variables:
+        temp:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor10/2:Temperature
+          tag: Temperature
+        hum:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor10/2:Humidity
+          tag: Humidity
+
+      constants:
+        sensor_model: 
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor10/2:SensorModel
+          tag: SensorModel
+
+      methods:
+        sensor_methods:
+          browse_path: 0:Root/0:Objects/2:Sensors/2:TemperatureSensor10
