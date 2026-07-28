@@ -65,7 +65,7 @@ class BaseGateway(OpenFactoryFastAPIApp):
         self._discover_coordinator()
 
         # wait coordinator becomes available
-        self.coordinator = Asset(asset_uuid=self.COORDINATOR_UUID, ksqlClient=self.ksql)
+        self.coordinator: Asset = Asset(asset_uuid=self.COORDINATOR_UUID, ksqlClient=self.ksql)
         self._wait_coordinator_available()
 
         # register gateway with coordinator
@@ -152,6 +152,11 @@ class BaseGateway(OpenFactoryFastAPIApp):
                     raise OFAException(f"Coordinator {self.COORDINATOR_UUID} did not become available within {timeout} seconds.")
 
             self.logger.info(f"Coordinator {self.COORDINATOR_UUID} not yet available")
+
+            # Recover from the startup race where the coordinator's AVAIL update was
+            # missed by NATS and had not yet been materialized in ksqlDB when the
+            # Asset was initially created.
+            self.coordinator.resync_state()
 
     def _fetch_assigned_devices(self):
         query = f"""
