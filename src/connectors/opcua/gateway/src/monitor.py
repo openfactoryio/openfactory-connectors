@@ -477,23 +477,13 @@ class DeviceMonitor:
                     )
                 )
 
-                # add OpenFactory command to Asset
-                self.asset.add_attribute(
-                    asset_attribute=AssetAttribute(
-                        id=f"{command}_CMD",
-                        value="",
-                        type='OpenFactory',
-                        tag='Method.Command'
-                    )
-                )
-
                 # subscribe to OpenFactory command directed to the Asset
                 def on_cmd(msg_key, msg_value, cmd=command):
                     try:
                         # Parse JSON string into CommandEnvelope
                         envelope = CommandEnvelope.parse_raw(msg_value['VALUE'])
                     except Exception as e:
-                        self.log.error(f"[{self.dev_uuid}] Failed to parse CommandEnvelope for '{cmd}': {e}")
+                        self.log.error(f"[{self.dev_uuid}] Failed to parse CommandEnvelope for '{cmd}' with args '{msg_value['VALUE']}': {e}")
                         return
 
                     # Schedule the OPC UA method call with typed envelope
