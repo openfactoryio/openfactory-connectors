@@ -410,6 +410,30 @@ class BaseGatewayTests(unittest.TestCase):
 
         coordinator.wait_until.assert_called()
 
+    def test_wait_coordinator_available_resyncs_after_failed_wait(self):
+        """ Test coordinator state is resynchronized after a failed wait. """
+
+        gateway = object.__new__(ExampleGateway)
+
+        coordinator = Mock()
+        coordinator.wait_until.return_value = False
+        coordinator.resync_state.side_effect = RuntimeError("stop")
+
+        object.__setattr__(gateway, "coordinator", coordinator)
+        object.__setattr__(gateway, "COORDINATOR_UUID", "TEST-COORDINATOR")
+        object.__setattr__(gateway, "logger", Mock())
+
+        with patch("time.time", side_effect=[0, 1]):
+            with self.assertRaises(RuntimeError):
+                gateway._wait_coordinator_available(timeout=30)
+
+        coordinator.wait_until.assert_called_once_with(
+            attribute_id="avail",
+            value="AVAILABLE",
+            timeout=30,
+        )
+        coordinator.resync_state.assert_called_once()
+
     @patch.object(BaseGateway, "_wait_coordinator_available")
     @patch("connectors.common.gateway.Asset", FakeCoordinatorAsset)
     def test_register_device_records_gateway_attribute(self, _wait):
