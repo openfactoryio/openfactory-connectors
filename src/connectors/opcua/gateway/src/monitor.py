@@ -530,7 +530,7 @@ class DeviceMonitor:
             except Exception:
                 self.log.exception(f"[{self.dev_uuid}] Failed to read '{local_name}' ({const_node.nodeid.to_string()})")
 
-    async def _subscribe_variables(self, client: Client, sub) -> dict[ua.NodeId, dict[str, Any]]:
+    async def _subscribe_variables(self, client: Client, sub: Subscription) -> dict[ua.NodeId, dict[str, Any]]:
         """
         Subscribe to all configured variables.
 
