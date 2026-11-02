@@ -71,6 +71,8 @@ class DeviceMonitor:
         self.node_map: dict = {}
         self.client: Client | None = None
         self.connection_lost = False
+        # Invalidate pending writes whenever a session is lost or replaced.
+        self._connection_generation = 0
 
     async def run(self) -> None:
         """
@@ -89,6 +91,7 @@ class DeviceMonitor:
 
                 async def on_connection_lost(exc: Exception) -> None:
                     self.connection_lost = True
+                    self._connection_generation += 1
                     self.log.warning(
                         f"[{self.dev_uuid}] Lost connection to OPC UA server ({exc}). "
                         f"Will automatically reconnect when the server becomes available."
@@ -100,6 +103,7 @@ class DeviceMonitor:
                 try:
                     await client.connect(auto_reconnect=True, reconnect_max_delay=2.0)
                     self.connection_lost = False
+                    self._connection_generation += 1
                     await self._run_session(client)
 
                 except asyncio.CancelledError:
@@ -530,6 +534,60 @@ class DeviceMonitor:
             except Exception:
                 self.log.exception(f"[{self.dev_uuid}] Failed to read '{local_name}' ({const_node.nodeid.to_string()})")
 
+    async def _apply_variable_update(
+        self,
+        node: Node,
+        name: str,
+        value: Any,
+        expected_generation: int,
+    ) -> None:
+        """Best-effort OPC UA write; discard updates from lost sessions.
+
+        This does not cancel a write already in progress at the transport layer.
+        It also cannot determine the original age of an upstream Kafka message.
+        """
+        if self.connection_lost or expected_generation != self._connection_generation:
+            self.log.warning(f"[{self.dev_uuid}] Discarded '{name}' update: connection unavailable or changed")
+            return
+
+        try:
+            variant_type = await node.read_data_type_as_variant_type()
+
+            if variant_type == ua.VariantType.Boolean:
+                if isinstance(value, bool):
+                    requested_value = value
+                elif isinstance(value, str) and value.strip().lower() in ("true", "false", "1", "0"):
+                    requested_value = value.strip().lower() in ("true", "1")
+                else:
+                    raise ValueError(f"Invalid Boolean value for '{name}': {value!r}")
+            elif isinstance(value, str):
+                requested_value = string_to_val(value, variant_type)
+            else:
+                requested_value = value
+
+            if self.connection_lost or expected_generation != self._connection_generation:
+                self.log.warning(f"[{self.dev_uuid}] Discarded '{name}' update during type read")
+                return
+
+            current_value = await node.read_value()
+
+            # Crucial: if an awaited read only completes after reconnection,
+            # the old request must not subsequently write to the new session.
+            if self.connection_lost or expected_generation != self._connection_generation:
+                self.log.warning(f"[{self.dev_uuid}] Discarded stale '{name}' update after OPC UA read")
+                return
+
+            if requested_value != current_value:
+                self.log.debug(f"[{self.dev_uuid}] Writing variable '{name}' ({node.nodeid.to_string()})")
+                await node.write_value(requested_value, varianttype=variant_type)
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # A read may fail while asyncua is reconnecting. Do not allow the
+            # background task to fail unobserved or retry an outdated command.
+            self.log.warning(f"[{self.dev_uuid}] Discarded '{name}' update: {exc}")
+
     async def _subscribe_variables(self, client: Client, sub: Subscription) -> dict[ua.NodeId, dict[str, Any]]:
         """
         Subscribe to all configured variables.
@@ -577,25 +635,23 @@ class DeviceMonitor:
                     if is_writable:
                         loop = asyncio.get_running_loop()
 
-                        async def _write_value(value: str, node: Node, name: str) -> None:
-                            """ Write value to OPC UA server. """
-                            try:
-                                v_type = await node.read_data_type_as_variant_type()
-                                await node.write_value(value, varianttype=v_type)
-                            except Exception:
-                                self.log.exception(f"[{self.dev_uuid}] Failed to write variable '{name}' ({node.nodeid.to_string()})")
-
                         def on_variable_update(msg_subject: str, msg_value: dict, node: Node = var_node, name: str = local_name) -> None:
-                            """ Callback for attribute changes, capturing loop variables. """
-
-                            async def _check_and_write(value: str):
-                                """ Avoid infinity loops. """
-                                current_val = await node.read_value()
-                                if value != current_val:
-                                    self.log.debug(f"[{self.dev_uuid}] Updating variable '{name}' ({node.nodeid.to_string()}) with '{value}'")
-                                    await _write_value(value, node=node, name=name)
-
-                            loop.create_task(_check_and_write(msg_value["VALUE"]))
+                            """Schedule a one-shot update; never queue retries for an offline device."""
+                            if "VALUE" not in msg_value:
+                                self.log.warning(f"[{self.dev_uuid}] Missing VALUE for variable '{name}'")
+                                return
+                            if self.connection_lost:
+                                self.log.warning(f"[{self.dev_uuid}] Discarded '{name}' update while offline")
+                                return
+                            generation = self._connection_generation
+                            loop.create_task(
+                                self._apply_variable_update(
+                                    node=node,
+                                    name=name,
+                                    value=msg_value["VALUE"],
+                                    expected_generation=generation,
+                                )
+                            )
 
                         # Schedule write-back to OPC UA server if OpenFactory detects a change
                         self.asset.subscribe_to_attribute(local_name, on_variable_update)
