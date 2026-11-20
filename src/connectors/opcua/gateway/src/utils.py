@@ -1,10 +1,11 @@
+
 """
 Utility functions for the OPC UA Gateway.
 
 This module provides helper functions for:
 
 - Extracting timestamps from OPC UA DataValues and events.
-- Resolving OPC UA nodes from browse paths.
+- Finding OPC UA nodes using browse paths.
 - Normalizing OPC UA values into Python-native representations.
 
 Functions:
@@ -32,7 +33,8 @@ def opcua_data_timestamp(data: ua.DataValue) -> datetime:
         data (ua.DataValue): The OPC UA DataValue to extract timestamps from.
 
     Returns:
-        datetime: The extracted timestamp as a UTC-aware datetime object.
+        datetime: The selected timestamp. If no timestamp is
+            available, the current UTC time is used.
     """
     if data.SourceTimestamp:
         return data.SourceTimestamp
@@ -54,10 +56,12 @@ def opcua_event_timestamp(event: Any) -> datetime:
         event (Any): OPC UA event object.
 
     Returns:
-        datetime: The extracted timestamp as a UTC-aware datetime object.
+        datetime: The selected timestamp. If no timestamp is
+            available, the current UTC time is used.
     """
     event_time = getattr(event, "Time", None)
     receive_time = getattr(event, "ReceiveTime", None)
+
     if hasattr(event_time, "isoformat"):
         return event_time
     if hasattr(receive_time, "isoformat"):
@@ -67,29 +71,28 @@ def opcua_event_timestamp(event: Any) -> datetime:
 
 async def get_node_by_path(client: Client, path: str) -> Node:
     """
-    Resolve and return an OPC UA node using a slash-separated browse path.
+    Find an OPC UA node using a slash-separated browse path.
 
-    The path must be given in the format ``"ns:Name/ns:ChildName/..."``,
-    where each segment specifies a namespace index and a browse name.
-    For example: ``"0:Objects/2:MyDevice/2:Sensor1"``.
+    Each part of the path contains a namespace index and a node name.
+    Example: "0:Objects/2:MyDevice/2:Sensor1"
 
-    If the first element ends with ``"Root"``, it will be skipped because
-    the search always starts from the OPC UA Root node.
+    If the path starts with "Root", it is skipped because
+    the search already begins at the OPC UA Root node.
 
     Args:
-        client (Client): Connected OPC UA client
-        path (str): Slash-separated list of browse path segments in the form ``"namespace_index:BrowseName"``.
+        client (Client): Connected OPC UA client.
+        path (str): Slash-separated list of browse path segments in
+            the form ``"namespace_index:BrowseName"``.
 
     Returns:
-        Node: The resolved OPC UA node corresponding to the provided path.
+        Node: The OPC UA node found at the given path.
 
     Raises:
-        ValueError:
-            If any segment in the provided path cannot be resolved.
+        ValueError: If the path cannot be resolved.
     """
     elements = path.split("/")
 
-    # Normalize: skip Root if included
+    # Skip Root if it is already included in the path.
     if elements[0].endswith("Root"):
         elements = elements[1:]
 
@@ -100,7 +103,7 @@ async def get_node_by_path(client: Client, path: str) -> Node:
         return node
 
     except ua.UaStatusCodeError as exc:
-        # Find out where it broke
+        # Find which part of the path could not be resolved.
         node = root
         resolved_segments = []
 
@@ -114,7 +117,7 @@ async def get_node_by_path(client: Client, path: str) -> Node:
                 failed_segment = segment
                 break
 
-        # browse children at the level where the failure occurred
+        # List available child nodes to help explain the error.
         try:
             children = await node.get_children()
             child_names = []
@@ -124,7 +127,7 @@ async def get_node_by_path(client: Client, path: str) -> Node:
         except Exception:
             child_names = []
 
-        # Build error message
+        # Build a useful error message showing where the search failed.
         available_children = ", ".join(child_names) if child_names else "<none>"
         msg = (
             f"Failed to resolve OPC UA path: '{path}'.\n"
@@ -142,31 +145,34 @@ def normalize_value(val: object) -> Any:
     Convert OPC UA-specific value types into JSON-serializable
     Python-native representations.
 
+    Handles text, bytes, lists, variants, and timestamps.
+    Values that are not recognized are returned unchanged.
+
     Args:
-        val (object): The new value of the variable.
+        val (object): Value received from OPC UA.
 
     Returns:
-        Any: Normalized Python representation of the input value.
+        Any: Normalized Python representation of the input value, or the original value.
     """
-    # LocalizedText → return its text
+    # Return the text stored inside an OPC UA LocalizedText.
     if isinstance(val, ua.LocalizedText):
         return val.Text
 
-    # ByteString → return hex string instead of raw bytes
+    # Convert bytes into a list of integers for JSON.
     if isinstance(val, (bytes, bytearray)):
         return list(val)
 
-    # Arrays → normalize each element
+    # Normalize each element of a list.
     if isinstance(val, list):
         return [normalize_value(v) for v in val]
 
-    # ua.Variant: unwrap
+    # Extract the value stored inside an OPC UA Variant.
     if isinstance(val, ua.Variant):
         return normalize_value(val.Value)
 
-    # datetime → return as str
+    # Convert timestamps into strings.
     if isinstance(val, datetime):
         return str(val)
 
-    # fallback: return as-is
+    # Fallback: return as-is
     return val
